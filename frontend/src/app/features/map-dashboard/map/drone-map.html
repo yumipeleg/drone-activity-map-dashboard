@@ -1,0 +1,17 @@
+<section class="map-panel" aria-labelledby="map-heading">
+  <h2 id="map-heading">Drone map</h2>
+
+  @if (state.dronesLoading()) {
+    <p class="status-message" role="status">Loading drones…</p>
+  }
+
+  @if (state.dronesError()) {
+    <p class="status-message error" role="alert">{{ state.dronesError() }}</p>
+  }
+
+  @if (!state.dronesLoading() && !state.dronesError() && state.drones().length === 0) {
+    <p class="status-message" role="status">No drones match the current filters.</p>
+  }
+
+  <div #mapContainer class="map-container" role="img" aria-label="Map showing current drone positions"></div>
+</section>

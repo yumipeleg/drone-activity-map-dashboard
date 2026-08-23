@@ -292,36 +292,85 @@ never touches the real `drone_activity` data:
 
 ## Frontend Structure (`frontend/`)
 
-Planned layout (Angular 21, standalone components, no NgModules):
+Implemented layout (Angular 21, standalone components, zoneless, no
+NgModules, no routing — a single dashboard page). File names follow
+Angular's modern (2025-style) convention: no `.component`/`.service`
+suffix on file names (e.g. `map-dashboard.ts`, `dashboard-state.ts`), while
+class names keep a `Service` suffix only where that adds clarity
+(`DronesApiService`, `PipelineApiService`, `DashboardStateService`).
 
 ```
 frontend/
   src/
     app/
-      core/            # Singleton services usable app-wide.
-        drones.service.ts        # HTTP calls to /api/drones*
-        pipeline.service.ts      # HTTP calls to /api/pipeline/*
-        models/                  # TypeScript interfaces mirroring API schemas
+      core/
+        api/
+          api-config.ts        # API_BASE_URL constant (http://localhost:8000)
+          drones-api.ts         # DronesApiService: GET /api/drones[/:id]
+          pipeline-api.ts       # PipelineApiService: POST /api/pipeline/run,
+                                 # GET /api/pipeline/runs[/:id]
+          query-params.ts       # buildDroneQueryParams(): DroneFilters -> HttpParams
+                                 # (omits empty/undefined fields; snake_case names)
+          http-error.ts         # extractErrorMessage(): HttpErrorResponse -> string
+        models/
+          drone-telemetry.ts    # DroneTelemetry, DroneStatus (mirrors DroneTelemetryRead)
+          pipeline-run.ts       # PipelineRun, PipelineRunStatus (mirrors PipelineRunRead)
+          drone-filters.ts      # DroneFilters (frontend-only filter shape, camelCase)
       features/
-        map-dashboard/           # Main dashboard page/feature.
-          map/                    # Leaflet map component (markers, popups)
-          filters/                # Filter form component (reactive forms)
-          pipeline-panel/         # "Run Pipeline" + run-history table
-      app.component.ts
-      app.routes.ts
-      app.config.ts              # Standalone bootstrap config, providers
+        map-dashboard/
+          map-dashboard.ts       # MapDashboard: thin page/container, calls
+                                  # DashboardStateService.loadInitial() on init
+          dashboard-state.ts     # DashboardStateService: all dashboard state
+                                  # (signals) + orchestration between the two
+                                  # API services and the four panels below
+          filters/
+            drone-filter-form.ts # DroneFilterForm: Reactive Form (drone type,
+                                  # status, operator ID, min battery, from/to date)
+          map/
+            drone-map.ts          # DroneMap: Leaflet map lifecycle + markers
+            drone-popup.ts         # buildDronePopupHtml() (escaped, pure function)
+            map-bounds.ts          # computeBounds() (pure function)
+          pipeline-panel/
+            pipeline-control.ts    # PipelineControl: "Run Pipeline" button
+            pipeline-runs-table.ts # PipelineRunsTable: read-only run history table
+      app.ts                  # Root component, renders <app-map-dashboard>
+      app.config.ts           # provideBrowserGlobalErrorListeners(), provideHttpClient()
+  public/
+    leaflet/                  # Leaflet's default marker icon images, copied from
+                               # node_modules/leaflet/dist/images (referenced via
+                               # L.Icon.Default.mergeOptions() in drone-map.ts)
 ```
 
-### State Approach
+### State Approach (implemented)
 
-- No NgRx. Component/page-level state is held in Angular **signals**,
-  populated by calling services in `core/`.
-- Services encapsulate HTTP calls and expose signals (or plain observables
-  converted to signals) for the current drone list, filter state, and
-  pipeline run history. Components read/write signals; they don't talk to
-  `HttpClient` directly.
-- Filters are modeled as a Reactive Form; form value changes drive a call to
-  `DronesService` to refetch filtered results.
+- No NgRx. All dashboard state lives in `DashboardStateService` as
+  **signals**: `drones`, `pipelineRuns`, `currentFilters`, `dronesLoading`,
+  `pipelineRunsLoading`, `pipelineRunning`, `dronesError`, `pipelineError` —
+  each exposed read-only (`.asReadonly()`); only the service itself calls
+  `.set()`.
+- Components read these signals directly via `inject(DashboardStateService)`
+  rather than through `@Input()` — there's exactly one dashboard instance, so
+  prop-drilling would add indirection with no reuse benefit.
+- Leaflet's `L.Map`/`L.LayerGroup` objects and the Reactive Form's live
+  control values are deliberately **not** signals — they're either mutable
+  imperative objects Leaflet itself owns, or transient UI-only state that
+  only matters at submit time.
+- `DroneMap` reads `state.drones()` inside an `effect()` to re-render
+  markers whenever the list changes, instead of an `@Input()` — this keeps
+  `MapDashboard` a thin container that doesn't need to thread data through.
+- Filtering always goes through `GET /api/drones` — `DroneFilterForm` never
+  filters an already-loaded array locally. Submitting calls
+  `DashboardStateService.applyFilters(filters)`, which remembers the filter
+  set and re-fetches; "Clear Filters" resets the form and calls
+  `applyFilters({})`.
+- `POST /api/pipeline/run` is still synchronous (no Celery yet): on a
+  domain `status: "completed"` response, `DashboardStateService` refreshes
+  both drones (with the currently-applied filters) and the run history; on
+  `status: "failed"`, it surfaces `error_message` as `pipelineError` and
+  refreshes only the run history — a `failed` domain result is a real,
+  fully-persisted outcome, not treated as a successful run just because the
+  HTTP call itself returned 200. An actual HTTP-level failure (network
+  error, 500) is caught separately and never crashes the dashboard.
 
 ## Pipeline / Worker Evolution Path (for later bonus phases)
 
@@ -343,8 +392,10 @@ a FastAPI or Celery dependency in the first place.
 - "Latest position per drone" and drone path-history (`/api/drones/{drone_id}/history`)
   endpoints — the current schema/queries support them without a redesign,
   but neither is implemented yet.
-- Exact Angular component boundaries beyond the sketch above (refined during
-  frontend implementation phase).
+- Low-battery / lost-signal marker styling and path-history (polyline)
+  rendering on the map — the current `DroneMap`/`drone-popup.ts` support
+  showing `battery_percent`/`status` per-drone in the popup, but no
+  conditional styling or polylines have been added yet (Day 4 bonus).
 - Docker Compose file contents beyond PostgreSQL (bonus phase — `backend`,
   `worker`, `redis`, `frontend` services).
 - Celery/Redis wiring details (bonus phase).

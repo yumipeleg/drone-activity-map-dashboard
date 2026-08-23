@@ -1,0 +1,59 @@
+.filters {
+  padding: 1rem;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.filters h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+.filters form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: flex-end;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 9rem;
+}
+
+.field label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #344054;
+}
+
+.field input,
+.field select {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.actions button {
+  padding: 0.45rem 0.9rem;
+  border-radius: 6px;
+  border: 1px solid #344054;
+  background: #344054;
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.actions button[type='button'] {
+  background: #fff;
+  color: #344054;
+}

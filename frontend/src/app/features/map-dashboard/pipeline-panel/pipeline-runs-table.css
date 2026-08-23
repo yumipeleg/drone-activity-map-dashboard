@@ -1,0 +1,58 @@
+.pipeline-runs {
+  padding: 1rem;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+}
+
+.pipeline-runs h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid #eaecf0;
+  white-space: nowrap;
+}
+
+.status-badge {
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  text-transform: capitalize;
+}
+
+.status-badge.completed {
+  background: #d1fadf;
+  color: #05603a;
+}
+
+.status-badge.failed {
+  background: #fee4e2;
+  color: #b42318;
+}
+
+.status-badge.started {
+  background: #fef0c7;
+  color: #93370d;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}

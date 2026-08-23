@@ -1,0 +1,43 @@
+<section class="pipeline-runs" aria-labelledby="pipeline-runs-heading">
+  <h2 id="pipeline-runs-heading">Pipeline run history</h2>
+
+  @if (state.pipelineRunsLoading()) {
+    <p class="status-message" role="status">Loading pipeline runs…</p>
+  } @else if (state.pipelineRuns().length === 0) {
+    <p class="status-message" role="status">No pipeline runs yet.</p>
+  } @else {
+    <div class="table-scroll">
+      <table>
+        <caption class="visually-hidden">Pipeline run history, most recent first</caption>
+        <thead>
+          <tr>
+            <th scope="col">Started</th>
+            <th scope="col">Finished</th>
+            <th scope="col">Status</th>
+            <th scope="col">Total</th>
+            <th scope="col">Valid</th>
+            <th scope="col">Invalid</th>
+            <th scope="col">Duplicate</th>
+            <th scope="col">Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (run of state.pipelineRuns(); track run.id) {
+            <tr>
+              <td>{{ run.started_at | date: 'short' }}</td>
+              <td>{{ run.finished_at ? (run.finished_at | date: 'short') : '—' }}</td>
+              <td>
+                <span class="status-badge" [class]="run.status">{{ run.status }}</span>
+              </td>
+              <td>{{ run.total_records }}</td>
+              <td>{{ run.valid_records }}</td>
+              <td>{{ run.invalid_records }}</td>
+              <td>{{ run.duplicate_records }}</td>
+              <td>{{ run.error_message ?? '—' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</section>

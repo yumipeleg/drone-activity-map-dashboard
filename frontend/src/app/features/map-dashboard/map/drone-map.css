@@ -1,0 +1,28 @@
+.map-panel {
+  padding: 1rem;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+}
+
+.map-panel h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+.status-message {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+}
+
+.status-message.error {
+  color: #b42318;
+}
+
+.map-container {
+  /* Leaflet needs an explicit, non-zero height to render; without one the
+     tiles/markers silently fail to show even though initialization succeeds. */
+  height: 480px;
+  min-height: 320px;
+  width: 100%;
+  border-radius: 6px;
+}

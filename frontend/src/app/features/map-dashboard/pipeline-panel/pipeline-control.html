@@ -1,0 +1,16 @@
+<section class="pipeline-control" aria-labelledby="pipeline-control-heading">
+  <h2 id="pipeline-control-heading">Pipeline</h2>
+
+  <button
+    type="button"
+    [disabled]="state.pipelineRunning()"
+    [attr.aria-busy]="state.pipelineRunning()"
+    (click)="runPipeline()"
+  >
+    {{ state.pipelineRunning() ? 'Running…' : 'Run Pipeline' }}
+  </button>
+
+  @if (state.pipelineError()) {
+    <p class="status-message error" role="alert">{{ state.pipelineError() }}</p>
+  }
+</section>
