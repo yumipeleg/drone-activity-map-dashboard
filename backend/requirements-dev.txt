@@ -1,0 +1,5 @@
+# Additional dependencies needed only for local development and testing.
+-r requirements.txt
+
+pytest>=8.0
+httpx>=0.27
