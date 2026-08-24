@@ -1,7 +1,15 @@
+:host {
+  display: block;
+}
+
 .map-panel {
+  height: 100%;
+  box-sizing: border-box;
   padding: 1rem;
   border: 1px solid #d0d5dd;
   border-radius: 8px;
+  display: flex;
+  flex-direction: column;
 }
 
 .map-panel h2 {
@@ -20,8 +28,11 @@
 
 .map-container {
   /* Leaflet needs an explicit, non-zero height to render; without one the
-     tiles/markers silently fail to show even though initialization succeeds. */
-  height: 480px;
+     tiles/markers silently fail to show even though initialization succeeds.
+     flex fills whatever height the dashboard grid stretches this card to
+     (see map-dashboard.css); min-height is the floor for narrow/stacked
+     layouts where there's no stretched height to fill. */
+  flex: 1 1 auto;
   min-height: 320px;
   width: 100%;
   border-radius: 6px;

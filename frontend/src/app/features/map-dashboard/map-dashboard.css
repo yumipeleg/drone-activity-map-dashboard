@@ -16,13 +16,30 @@
   display: grid;
   grid-template-columns: 2fr 1fr;
   gap: 1rem;
-  align-items: start;
+  /* stretch (not "start"): makes the drone map card and the right-hand
+     column match the row's height, so whichever side is naturally taller
+     sets the height for both. */
+  align-items: stretch;
 }
 
 .side-panel {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  min-height: 0;
+}
+
+app-pipeline-control {
+  /* Pinned to its own content size at the top of the column. */
+  flex: 0 0 auto;
+}
+
+app-pipeline-runs-table {
+  /* Consumes whatever height is left in the (stretched) column. min-height:
+     0 lets its internal scroll area actually shrink instead of forcing the
+     column — and the page — taller. */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 @media (max-width: 800px) {

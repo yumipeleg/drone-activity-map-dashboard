@@ -37,6 +37,16 @@ describe('PipelineApiService', () => {
     req.flush([]);
   });
 
+  it('listRuns() defaults to limit=100 when called with no argument', () => {
+    service.listRuns().subscribe();
+
+    const req = httpMock.expectOne(
+      (r) => r.url === `${API_BASE_URL}/api/pipeline/runs` && r.method === 'GET',
+    );
+    expect(req.request.params.get('limit')).toBe('100');
+    req.flush([]);
+  });
+
   it('getRun() requests GET /api/pipeline/runs/{id}', () => {
     service.getRun(7).subscribe();
 

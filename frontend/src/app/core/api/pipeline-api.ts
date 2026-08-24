@@ -18,7 +18,8 @@ export class PipelineApiService {
     return this.http.post<PipelineRun>(`${this.baseUrl}/run`, {});
   }
 
-  listRuns(limit = 20): Observable<PipelineRun[]> {
+  /** Defaults to 100 (the dashboard's run-history table) — still well within the backend's `limit` cap of 100 (`ge=1, le=100`). */
+  listRuns(limit = 100): Observable<PipelineRun[]> {
     const params = new HttpParams().set('limit', limit);
     return this.http.get<PipelineRun[]>(`${this.baseUrl}/runs`, { params });
   }

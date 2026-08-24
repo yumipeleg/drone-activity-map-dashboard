@@ -1,3 +1,7 @@
+:host {
+  display: block;
+}
+
 .pipeline-control {
   padding: 1rem;
   border: 1px solid #d0d5dd;
