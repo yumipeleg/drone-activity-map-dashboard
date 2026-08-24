@@ -6,9 +6,9 @@ import { PipelineControl } from './pipeline-panel/pipeline-control';
 import { PipelineRunsTable } from './pipeline-panel/pipeline-runs-table';
 
 /**
- * Thin page/container component: lays out the four dashboard panels and
- * kicks off the initial load. It holds no state of its own — everything
- * lives in `DashboardStateService`, which each child reads directly.
+ * Thin page/container component: lays out the dashboard panels and kicks
+ * off the initial load. It holds no state of its own — everything lives
+ * in `DashboardStateService`, which each child reads directly.
  */
 @Component({
   selector: 'app-map-dashboard',

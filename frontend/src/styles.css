@@ -14,11 +14,16 @@ body {
 }
 
 .drone-popup dl {
-  margin: 0.35rem 0 0;
+  margin: 0.25rem 0 0;
   display: grid;
   grid-template-columns: auto auto;
-  gap: 0.15rem 0.5rem;
-  font-size: 0.85rem;
+  gap: 0.1rem 0.45rem;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.drone-popup strong {
+  font-size: 0.9rem;
 }
 
 .drone-popup dt {
@@ -28,4 +33,13 @@ body {
 
 .drone-popup dd {
   margin: 0;
+}
+
+.leaflet-popup-content {
+  margin: 10px 12px;
+  line-height: 1.35;
+}
+
+.leaflet-popup-content-wrapper {
+  border-radius: 6px;
 }

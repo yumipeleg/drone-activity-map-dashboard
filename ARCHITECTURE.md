@@ -58,17 +58,24 @@ backend/
       routes/
         pipeline.py  # POST /api/pipeline/run, GET /api/pipeline/runs,
                      # GET /api/pipeline/runs/{run_id} (implemented, Phase 2B)
-        drones.py    # GET /api/drones, GET /api/drones/{telemetry_id}
-                     # (implemented, Phase 2B)
-        stats.py     # GET /api/stats (optional/bonus, not implemented)
+        drones.py    # GET /api/drones (latest_only + pagination),
+                     # GET /api/drones/{drone_id}/history,
+                     # GET /api/drones/{telemetry_id} (implemented, Day 4)
+        stats.py     # GET /api/stats (implemented, Day 4)
       main.py         # FastAPI app instance, router registration, CORS, etc.
 
     services/        # Thin query/business-operation functions between
                      # routes and the database (route -> service ->
-                     # SQLAlchemy). Implemented, Phase 2B.
+                     # SQLAlchemy). Implemented, Phase 2B; extended Day 4.
       pipeline_runs.py # list_pipeline_runs(), get_pipeline_run()
-      drones.py        # list_drone_telemetry() (builds one filtered SQL
-                       # query from optional criteria), get_drone_telemetry()
+      drones.py        # latest_telemetry_statement() (one row per drone_id,
+                       # its greatest timestamp — shared with stats.py),
+                       # _apply_filters() (shared WHERE-clause builder),
+                       # list_drone_telemetry() (raw or latest-only, paginated
+                       # or not), count_drone_telemetry(), list_drone_history(),
+                       # get_drone_telemetry()
+      stats.py         # get_stats(): fleet-wide summary built from
+                       # latest_telemetry_statement() + one plain COUNT(*)
 
     pipeline/        # Framework-independent pipeline logic (implemented).
                      # No import of FastAPI or Celery anywhere in this package.
@@ -94,7 +101,11 @@ backend/
                      # from DroneTelemetryInput, which validates raw
                      # pipeline input and is never returned by the API.
                      # DroneTelemetryFilters groups the optional
-                     # GET /api/drones query parameters.
+                     # GET /api/drones query parameters, including
+                     # latest_only/page/page_size (Day 4). DroneTelemetryPage
+                     # is the {items, total, page, page_size} envelope
+                     # returned by GET /api/drones (Day 4). stats.py's
+                     # StatsRead is the GET /api/stats response shape.
     db/
       session.py      # SQLAlchemy engine/session setup.
       base.py          # Declarative base shared by models.
@@ -236,27 +247,98 @@ Pydantic response schema (never a raw ORM object):
 - `GET /api/drones` — `services.drones.list_drone_telemetry()` builds one
   SQLAlchemy query with a `.where()` added per provided (optional) filter —
   `drone_type`, `status`, `operator_id`, `min_battery`, and a `from`/`to`
-  date range — never filtering in Python after loading rows. Filters are
-  grouped into a `DroneTelemetryFilters` schema instance built by the route
-  from individual FastAPI query parameters (kept as individual parameters,
-  not a `Depends()`-injected query model, for straightforward
+  date range — via a shared `_apply_filters()` helper, never filtering in
+  Python after loading rows. Filters (plus `latest_only`/`page`/`page_size`,
+  Day 4) are grouped into a `DroneTelemetryFilters` schema instance built by
+  the route from individual FastAPI query parameters (kept as individual
+  parameters, not a `Depends()`-injected query model, for straightforward
   alias handling of the `from`/`to` reserved-word parameter names). The
   public `?from=YYYY-MM-DD&to=YYYY-MM-DD` parameters are plain calendar
   dates; internally they become timezone-aware UTC boundaries:
   `timestamp >= start_of(from)` and `timestamp < start_of(to + 1 day)` — an
   exclusive upper bound, not a fragile `<= 23:59:59.999999` comparison.
-  Returns individual telemetry rows (most recent first), not "latest
-  position per drone" — that is a separate, not-yet-implemented feature.
+  Returns a `DroneTelemetryPage` envelope: `{items, total, page, page_size}`
+  (a deliberate, contained breaking change from the earlier bare-array
+  response — see "Latest Position, Pagination and Stats (Day 4)" below for
+  full details on `latest_only`, latest+filter semantics, and the
+  pagination trade-off).
+- `GET /api/drones/{drone_id}/history` (Day 4) —
+  `services.drones.list_drone_history()`, oldest → newest, always
+  **HTTP 200** (an unknown `drone_id` returns `200` + `[]`, never `404` —
+  see below). `{drone_id}` is the *business* identifier (e.g.
+  `"DRONE-001"`), unlike `{telemetry_id}` below.
 - `GET /api/drones/{telemetry_id}` — `services.drones.get_drone_telemetry()`,
   **HTTP 404** if missing. `{telemetry_id}` is the `DroneTelemetry` row's own
   internal integer primary key (`id`), *not* the business `drone_id` — one
-  `drone_id` can have many rows over time. A future business-drone history
-  endpoint is expected to live at a separate route such as
-  `/api/drones/{drone_id}/history` rather than overloading this one.
+  `drone_id` can have many rows over time. No path conflict with the history
+  route above: FastAPI/Starlette matches purely by path shape (one segment
+  vs. two after `/api/drones/`), so declaration order doesn't matter here.
+- `GET /api/stats` (Day 4) — `services.stats.get_stats()`, a whole-fleet
+  summary, never affected by the query parameters `GET /api/drones` accepts
+  (see below).
 
 Invalid query parameter values (e.g. `min_battery=500`, an unknown
-`status`, a non-integer path id) are rejected with FastAPI/Pydantic's
-default **HTTP 422** — no custom validation/error framework was added.
+`status`, a non-integer path id, `page_size=101`) are rejected with
+FastAPI/Pydantic's default **HTTP 422** — no custom validation/error
+framework was added.
+
+### Latest Position, Pagination and Stats (finalized in Day 4)
+
+**Latest position per drone (`GET /api/drones?latest_only=true`)** — the map
+always uses this mode; there is no user-facing "latest only" toggle.
+`services.drones.latest_telemetry_statement()` builds one row per
+`drone_id` — its single greatest-`timestamp` row — as a `MAX(timestamp)`
+subquery grouped by `drone_id`, joined back onto `DroneTelemetry` on
+`(drone_id, timestamp)`. No tiebreaker/window function is needed: that pair
+is already unique (`uq_drone_telemetry_drone_id_timestamp`), so the join can
+never return more than one row per drone. This same function is reused by
+`services/stats.py` for every current-state stat, so there is exactly one
+definition of "a drone's current state" in the codebase.
+
+**Latest + filter semantics**: filters are applied *after* the latest-row
+restriction, never before. Concretely, `_apply_filters()` runs against the
+already-one-row-per-drone base query, so `status=lost_signal` only matches a
+drone whose *current* status is `lost_signal` — a drone that was
+`lost_signal` yesterday but is `active` now will not match, because its
+older `lost_signal` row is never considered once a newer row exists for
+that `drone_id`. The same logic applies to `min_battery` and the
+`from`/`to` date range: a date range filter constrains the drone's own
+*absolute latest* row's timestamp, never resurrecting an earlier row that
+happens to fall inside the requested range.
+
+**Pagination (`page`/`page_size`, default `1`/`20`, `page_size` capped at
+`100`)** applies only when `latest_only=false` (the raw, un-collapsed
+historical listing) — `OFFSET`/`LIMIT` plus a separate `COUNT(*)` query
+(`count_drone_telemetry()`) populate the `total`/`page`/`page_size` envelope
+fields. When `latest_only=true`, pagination is intentionally bypassed:
+every matching drone's current row is returned in one implicit "page"
+(`total = page_size = len(items)`), because that result set is bounded by
+distinct-drone count (not telemetry history size), and the map needs the
+complete current fleet at once. This is an explicit, documented trade-off:
+historical telemetry can grow indefinitely (hence real pagination there),
+while the "current fleet" view is small by nature at this exercise's scale.
+A much larger production fleet might instead need viewport-based loading or
+marker clustering on the frontend — not needed here.
+
+**Path history (`GET /api/drones/{drone_id}/history`)** returns the full
+recorded history for that `drone_id`, independent of any `GET /api/drones`
+filter — selecting a drone on the map is a separate, deliberate user action,
+and coupling its path to the currently-applied dashboard filters would be
+surprising. Returns `200` + `[]` for an unknown `drone_id` rather than
+`404`, because `drone_id` is a free-form column value being *filtered* on,
+not a primary key being *looked up* — the same way the collection endpoint
+responds to a filter that matches nothing.
+
+**Stats (`GET /api/stats`)**: `total_telemetry_records` is a plain
+`COUNT(*)` over the *entire* `drone_telemetry` table. Every other field
+(`distinct_drones`, `active_drones`, `landed_drones`, `lost_signal_drones`,
+`low_battery_drones`, `average_battery_percent`) is computed from
+`latest_telemetry_statement()` only — i.e. each drone's current state, not
+its full history. `low_battery_drones` uses the same strict `< 20` boundary
+as the frontend's marker styling (`19` is low, `20` is not). Stats are
+global and are never affected by the dashboard's filter panel — the route
+takes no query parameters at all. The Angular dashboard does not currently
+consume or display this endpoint; it exists as a backend API only.
 
 ### Testing (finalized in Phase 2B — `backend/tests/conftest.py`)
 
@@ -306,7 +388,10 @@ frontend/
       core/
         api/
           api-config.ts        # API_BASE_URL constant (http://localhost:8000)
-          drones-api.ts         # DronesApiService: GET /api/drones[/:id]
+          drones-api.ts         # DronesApiService: listLatest() (GET /api/drones
+                                 # with latest_only=true, Day 4), getHistory()
+                                 # (GET /api/drones/{drone_id}/history, Day 4),
+                                 # get() (GET /api/drones/{telemetry_id})
           pipeline-api.ts       # PipelineApiService: POST /api/pipeline/run,
                                  # GET /api/pipeline/runs[/:id]
           query-params.ts       # buildDroneQueryParams(): DroneFilters -> HttpParams
@@ -314,6 +399,7 @@ frontend/
           http-error.ts         # extractErrorMessage(): HttpErrorResponse -> string
         models/
           drone-telemetry.ts    # DroneTelemetry, DroneStatus (mirrors DroneTelemetryRead)
+          drone-page.ts          # DronePage (mirrors DroneTelemetryPage envelope, Day 4)
           pipeline-run.ts       # PipelineRun, PipelineRunStatus (mirrors PipelineRunRead)
           drone-filters.ts      # DroneFilters (frontend-only filter shape, camelCase)
       features/
@@ -322,12 +408,24 @@ frontend/
                                   # DashboardStateService.loadInitial() on init
           dashboard-state.ts     # DashboardStateService: all dashboard state
                                   # (signals) + orchestration between the two
-                                  # API services and the four panels below
+                                  # API services and the dashboard panels below
           filters/
             drone-filter-form.ts # DroneFilterForm: Reactive Form (drone type,
                                   # status, operator ID, min battery, from/to date)
           map/
-            drone-map.ts          # DroneMap: Leaflet map lifecycle + markers
+            drone-map.ts          # DroneMap: Leaflet map lifecycle, CircleMarker
+                                   # fleet markers (styled via marker-style.ts),
+                                   # click-to-select, and a dedicated history
+                                   # layer with a polyline plus small history-
+                                   # point markers (Day 4)
+            marker-style.ts        # getMarkerStyle(): pure function -> CircleMarker
+                                    # options for normal / low-battery / lost-signal
+            history-point-style.ts # getHistoryPointStyle(): small distinct markers
+                                    # for each historical telemetry point (Day 4)
+            history-render.ts      # getHistoricalPoints(), non-interactive overlay
+                                    # options, and selected-history status messages
+            history-map-view.ts    # computeHistoryMapView(): bounds vs single-point
+                                    # center for framing a selected drone's path
             drone-popup.ts         # buildDronePopupHtml() (escaped, pure function)
             map-bounds.ts          # computeBounds() (pure function)
           pipeline-panel/
@@ -336,41 +434,79 @@ frontend/
       app.ts                  # Root component, renders <app-map-dashboard>
       app.config.ts           # provideBrowserGlobalErrorListeners(), provideHttpClient()
   public/
-    leaflet/                  # Leaflet's default marker icon images, copied from
-                               # node_modules/leaflet/dist/images (referenced via
-                               # L.Icon.Default.mergeOptions() in drone-map.ts)
+    leaflet/                  # Leaflet's layer-control images only (layers.png,
+                               # layers-2x.png), copied from
+                               # node_modules/leaflet/dist/images. The default
+                               # marker-icon*.png/marker-shadow.png assets and the
+                               # L.Icon.Default.mergeOptions() override were
+                               # removed in Day 4 once every marker switched to
+                               # L.circleMarker (no image assets needed).
 ```
 
-### State Approach (implemented)
+### State Approach (implemented; extended Day 4)
 
 - No NgRx. All dashboard state lives in `DashboardStateService` as
   **signals**: `drones`, `pipelineRuns`, `currentFilters`, `dronesLoading`,
-  `pipelineRunsLoading`, `pipelineRunning`, `dronesError`, `pipelineError` —
-  each exposed read-only (`.asReadonly()`); only the service itself calls
-  `.set()`.
+  `pipelineRunsLoading`, `pipelineRunning`, `dronesError`, `pipelineError`,
+  and (Day 4) `selectedDroneId`, `selectedDroneHistory`, `historyLoading`,
+  `historyError` — each exposed read-only (`.asReadonly()`); only the
+  service itself calls `.set()`.
 - Components read these signals directly via `inject(DashboardStateService)`
   rather than through `@Input()` — there's exactly one dashboard instance, so
   prop-drilling would add indirection with no reuse benefit.
-- Leaflet's `L.Map`/`L.LayerGroup` objects and the Reactive Form's live
-  control values are deliberately **not** signals — they're either mutable
-  imperative objects Leaflet itself owns, or transient UI-only state that
-  only matters at submit time.
-- `DroneMap` reads `state.drones()` inside an `effect()` to re-render
-  markers whenever the list changes, instead of an `@Input()` — this keeps
-  `MapDashboard` a thin container that doesn't need to thread data through.
+- Leaflet's `L.Map`/`L.LayerGroup`/`L.Polyline` objects and the Reactive
+  Form's live control values are deliberately **not** signals — they're
+  either mutable imperative objects Leaflet itself owns (kept local to
+  `DroneMap`), or transient UI-only state that only matters at submit time.
+- `drones` always holds the map's "one row per drone" current-fleet view
+  (`DronesApiService.listLatest()`, which fixes `latest_only=true` — the
+  dashboard has no user-facing toggle for this). `DroneMap` reads
+  `state.drones()` inside an `effect()` to re-render `L.circleMarker`s
+  whenever the list changes, instead of an `@Input()`.
 - Filtering always goes through `GET /api/drones` — `DroneFilterForm` never
   filters an already-loaded array locally. Submitting calls
   `DashboardStateService.applyFilters(filters)`, which remembers the filter
   set and re-fetches; "Clear Filters" resets the form and calls
   `applyFilters({})`.
-- `POST /api/pipeline/run` is still synchronous (no Celery yet): on a
-  domain `status: "completed"` response, `DashboardStateService` refreshes
-  both drones (with the currently-applied filters) and the run history; on
-  `status: "failed"`, it surfaces `error_message` as `pipelineError` and
-  refreshes only the run history — a `failed` domain result is a real,
-  fully-persisted outcome, not treated as a successful run just because the
-  HTTP call itself returned 200. An actual HTTP-level failure (network
-  error, 500) is caught separately and never crashes the dashboard.
+- **Drone selection / path history (Day 4)**: clicking a marker calls
+  `DashboardStateService.selectDrone(droneId)`, which toggles selection off
+  if that drone is already selected, or otherwise sets `selectedDroneId`,
+  clears any previous history, and fetches
+  `GET /api/drones/{drone_id}/history`. `DroneMap` reads
+  `state.selectedDroneHistory()` inside a second `effect()` to redraw a
+  dedicated history layer: small non-interactive history-point markers for
+  every historical row *before* the latest one (via `getHistoricalPoints()`),
+  plus a non-interactive `L.Polyline` through all coordinates when there are
+  two or more points. The latest position is never duplicated as a history
+  overlay — the interactive fleet marker remains the sole clickable marker
+  at the drone's current position.
+  `computeHistoryMapView()` — `fitBounds` for multi-point histories, or
+  `setView` at a sensible fixed zoom for a single point. Every history
+  request closes over the `droneId` it was made for; both its success and
+  error callbacks re-check `this._selectedDroneId() === droneId` before
+  applying anything. `refreshDrones()` also clears the current selection
+  automatically if the selected drone is no longer present in a new
+  (filtered) result.
+- **`GET /api/stats` (backend only)**: the backend endpoint and its tests
+  exist (Day 4), but the Angular dashboard does not call it or render a
+  stats panel — the exercise only requires/proposes the API endpoint itself.
+- `POST /api/pipeline/run` is still synchronous (no Celery yet): on *every*
+  HTTP-level response (regardless of the run's own domain `status`),
+  `DashboardStateService` refreshes drones and pipeline run history — the
+  backend commits valid telemetry rows individually, so even a domain
+  `"failed"` run may have persisted some rows before failing. On
+  `status: "failed"`, `error_message` is also surfaced as `pipelineError`.
+  An actual HTTP-level failure (network error, 500) is caught separately,
+  refreshes nothing, and never crashes the dashboard.
+- **Marker styling (Day 4)**: `getMarkerStyle(drone)` (`map/marker-style.ts`)
+  is a pure function — no Leaflet dependency — returning `CircleMarker`
+  options. Four states distinguished by color, fill, and a dashed outline
+  for lost signal: normal (green), low battery only (`battery_percent < 20`,
+  strictly — amber), lost signal only (`status === 'lost_signal'`, red with
+  dashed outline), and both combined (dark red, dashed outline). All states
+  share the same marker radius. A compact legend below the map reuses the
+  same helper via `getMarkerLegendEntries()` so swatches stay in sync with
+  live markers.
 
 ## Pipeline / Worker Evolution Path (for later bonus phases)
 
@@ -387,18 +523,18 @@ a FastAPI or Celery dependency in the first place.
 
 ## What Is Deliberately Not Decided Yet
 
-- `/api/stats` endpoint (bonus, not yet designed).
-- Pagination beyond `GET /api/pipeline/runs`'s simple `limit` cap.
-- "Latest position per drone" and drone path-history (`/api/drones/{drone_id}/history`)
-  endpoints — the current schema/queries support them without a redesign,
-  but neither is implemented yet.
-- Low-battery / lost-signal marker styling and path-history (polyline)
-  rendering on the map — the current `DroneMap`/`drone-popup.ts` support
-  showing `battery_percent`/`status` per-drone in the popup, but no
-  conditional styling or polylines have been added yet (Day 4 bonus).
-- Docker Compose file contents beyond PostgreSQL (bonus phase — `backend`,
-  `worker`, `redis`, `frontend` services).
-- Celery/Redis wiring details (bonus phase).
+Everything below is Day 5 scope:
 
-These are intentionally deferred per the agreed workflow: implement only the
-phase that's explicitly requested.
+- Docker Compose file contents beyond PostgreSQL (`backend`, `worker`,
+  `redis`, `frontend` services).
+- Celery/Redis wiring details, async `POST /api/pipeline/run` (`HTTP 202` +
+  `run_id`), and frontend polling of `GET /api/pipeline/runs/{run_id}`.
+- Final README / setup instructions.
+
+Day 4 (latest position per drone, drone path history, low-battery/
+lost-signal marker styling, `GET /api/drones` pagination, `GET /api/stats`)
+is finalized — see "Latest Position, Pagination and Stats (finalized in Day
+4)" above and the "State Approach" section for the frontend side.
+
+These remaining items are intentionally deferred per the agreed workflow:
+implement only the phase that's explicitly requested.

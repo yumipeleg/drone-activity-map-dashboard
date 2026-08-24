@@ -139,16 +139,29 @@ A history of pipeline executions is stored, with at least:
 - Persistence is kept behind SQLAlchemy so application/business logic is not
   tightly coupled to PostgreSQL specifics.
 
-### Future Bonus Features (not implemented until explicitly requested)
+### Bonus Features
 
-- Latest drone position (derived view over full history).
-- Drone path history (per-drone track).
-- Pagination on `/api/drones`.
-- Low-battery highlighting (battery < 20%).
-- Lost-signal highlighting.
-- Docker Compose (frontend, backend, database, and later worker/broker).
+Implemented (Day 4) — see [`ARCHITECTURE.md`](./ARCHITECTURE.md) for details:
+
+- Latest drone position per drone (`GET /api/drones?latest_only=true`,
+  always used by the map — no user-facing toggle).
+- Drone path history (`GET /api/drones/{drone_id}/history`, drawn as a
+  non-interactive polyline plus historical point markers when a marker is
+  selected; single-point histories show only the fleet marker and a
+  dedicated status message).
+- Pagination on `GET /api/drones` (`page`/`page_size`, bypassed for
+  `latest_only=true`).
+- Low-battery highlighting (`battery_percent < 20`, strictly) and
+  lost-signal highlighting, via `L.circleMarker` styling.
+- `GET /api/stats` backend endpoint and fleet-wide summary semantics.
+- Meaningful unit/integration tests for all of the above.
+
+Not yet implemented (Day 5):
+
+- Docker Compose (frontend, backend, and worker/broker services — database
+  already runs via Compose).
 - Celery background worker + Redis broker for pipeline execution.
-- Meaningful unit/integration tests.
+- Final README / setup instructions.
 
 ### Important Architectural Rule
 

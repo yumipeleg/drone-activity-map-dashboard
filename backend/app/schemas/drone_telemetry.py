@@ -90,9 +90,12 @@ class DroneTelemetryRead(BaseModel):
 class DroneTelemetryFilters(BaseModel):
     """Internal DTO grouping the already-validated `GET /api/drones` query
     parameters, so the route stays a thin pass-through and the service
-    function has one clear object to build a query from (rather than six
-    loose positional/keyword arguments) — this is also where a future
-    `page`/`page_size` pair would be added without touching the route.
+    function has one clear object to build a query from (rather than nine
+    loose positional/keyword arguments).
+
+    `latest_only`/`page`/`page_size` are not "filters" in the WHERE-clause
+    sense, but grouping them here keeps the route/service boundary at one
+    object either way — see app/services/drones.py for how each is used.
     """
 
     drone_type: str | None = None
@@ -101,3 +104,24 @@ class DroneTelemetryFilters(BaseModel):
     min_battery: int | None = None
     date_from: date | None = None
     date_to: date | None = None
+    latest_only: bool = False
+    page: int = 1
+    page_size: int = 20
+
+
+class DroneTelemetryPage(BaseModel):
+    """Paginated envelope returned by `GET /api/drones`.
+
+    For a `latest_only=true` request, pagination is bypassed (see
+    app/services/drones.py and app/api/routes/drones.py): `items` contains
+    every matching drone's current row, and `total`/`page_size` both equal
+    `len(items)` — the map needs the complete current fleet at once, and
+    that result set is bounded by distinct-drone count, not telemetry
+    history size. A production fleet at much larger scale might instead
+    need viewport-based loading or marker clustering; not needed here.
+    """
+
+    items: list[DroneTelemetryRead]
+    total: int
+    page: int
+    page_size: int

@@ -1,5 +1,8 @@
 .dashboard {
-  max-width: 1200px;
+  /* Centered layout with comfortable outer margins; widened from 1200px so
+     wide desktops use more horizontal space without going edge-to-edge. */
+  width: 100%;
+  max-width: 1500px;
   margin: 0 auto;
   padding: 1.5rem;
   display: flex;
@@ -14,7 +17,9 @@
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  /* Balanced ~50/50 map / pipeline on desktop (user-tested: map stays large,
+     legend fits, pipeline table columns fit without horizontal scroll). */
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 1fr);
   gap: 1rem;
   /* stretch (not "start"): makes the drone map card and the right-hand
      column match the row's height, so whichever side is naturally taller
@@ -42,7 +47,7 @@ app-pipeline-runs-table {
   min-height: 0;
 }
 
-@media (max-width: 800px) {
+@media (max-width: 1050px) {
   .dashboard-grid {
     grid-template-columns: 1fr;
   }

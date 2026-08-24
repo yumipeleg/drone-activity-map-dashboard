@@ -23,7 +23,9 @@
   /* Fills whatever height map-dashboard.css's flex layout allocates to this
      card; max-height is an unconditional cap (also applies on narrow/
      stacked layouts, where there's no stretched height to fill) so a large
-     run history scrolls in place instead of growing the whole page. */
+     run history scrolls in place instead of growing the whole page.
+     overflow-x: auto at all widths — scroll appears only when the table's
+     natural width exceeds the available column width (no clipping). */
   flex: 1 1 auto;
   min-height: 0;
   max-height: 70vh;
@@ -33,6 +35,9 @@
 
 table {
   width: 100%;
+  /* Content-driven floor (~660–680px for 8 nowrap columns + Error wrap); expands
+     to fill the panel when more space is available. */
+  min-width: 680px;
   border-collapse: collapse;
   font-size: 0.85rem;
 }
@@ -40,9 +45,14 @@ table {
 th,
 td {
   text-align: left;
-  padding: 0.4rem 0.6rem;
+  padding: 0.4rem 0.45rem;
   border-bottom: 1px solid #eaecf0;
   white-space: nowrap;
+}
+
+th:last-child,
+td:last-child {
+  white-space: normal;
 }
 
 thead th {

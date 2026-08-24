@@ -13,5 +13,26 @@
     <p class="status-message" role="status">No drones match the current filters.</p>
   }
 
+  @if (state.selectedDroneId() && state.historyLoading()) {
+    <p class="status-message selection" role="status">Loading history for {{ state.selectedDroneId() }}…</p>
+  }
+
+  @if (selectedHistoryMessage(); as message) {
+    <p class="status-message selection" role="status">{{ message }}</p>
+  }
+
+  @if (state.historyError()) {
+    <p class="status-message error" role="alert">Could not load drone history: {{ state.historyError() }}</p>
+  }
+
   <div #mapContainer class="map-container" role="img" aria-label="Map showing current drone positions"></div>
+
+  <ul class="marker-legend" aria-label="Map marker legend">
+    @for (entry of markerLegend; track entry.label) {
+      <li class="marker-legend-item">
+        <span class="marker-legend-swatch" [ngStyle]="legendSwatchStyle(entry)" aria-hidden="true"></span>
+        <span class="marker-legend-label">{{ entry.label }}</span>
+      </li>
+    }
+  </ul>
 </section>

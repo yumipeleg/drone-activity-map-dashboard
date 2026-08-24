@@ -9,9 +9,13 @@ import { PipelineRun } from '../../core/models/pipeline-run';
 
 /**
  * Owns the dashboard's shared state and all orchestration between the two
- * API services and the four dashboard components (route -> service ->
- * SQLAlchemy on the backend; here, component -> this service -> API
- * service). No NgRx: plain signals, matching AGENTS.md.
+ * API services and the dashboard components (route -> service -> SQLAlchemy
+ * on the backend; here, component -> this service -> API service). No NgRx:
+ * plain signals, matching AGENTS.md.
+ *
+ * Leaflet rendering objects (L.Map/L.LayerGroup/L.Polyline) never live here —
+ * they stay local to DroneMap, which reads `selectedDroneHistory` via its
+ * own `effect()`.
  */
 @Injectable({ providedIn: 'root' })
 export class DashboardStateService {
@@ -27,6 +31,11 @@ export class DashboardStateService {
   private readonly _dronesError = signal<string | null>(null);
   private readonly _pipelineError = signal<string | null>(null);
 
+  private readonly _selectedDroneId = signal<string | null>(null);
+  private readonly _selectedDroneHistory = signal<DroneTelemetry[]>([]);
+  private readonly _historyLoading = signal(false);
+  private readonly _historyError = signal<string | null>(null);
+
   readonly drones = this._drones.asReadonly();
   readonly pipelineRuns = this._pipelineRuns.asReadonly();
   readonly currentFilters = this._currentFilters.asReadonly();
@@ -35,6 +44,11 @@ export class DashboardStateService {
   readonly pipelineRunning = this._pipelineRunning.asReadonly();
   readonly dronesError = this._dronesError.asReadonly();
   readonly pipelineError = this._pipelineError.asReadonly();
+
+  readonly selectedDroneId = this._selectedDroneId.asReadonly();
+  readonly selectedDroneHistory = this._selectedDroneHistory.asReadonly();
+  readonly historyLoading = this._historyLoading.asReadonly();
+  readonly historyError = this._historyError.asReadonly();
 
   /** Called once when the dashboard mounts. The two requests are independent and run in parallel. */
   loadInitial(): void {
@@ -48,14 +62,26 @@ export class DashboardStateService {
     this.refreshDrones();
   }
 
+  /**
+   * Always requests the map's one-row-per-drone "current fleet" view (see
+   * `DronesApiService.listLatest`). If the currently selected drone is no
+   * longer present in the new result (filtered out, or no longer
+   * reporting), its selection/path is cleared — keeping a path visible
+   * for a marker that's no longer on the map would be confusing.
+   */
   refreshDrones(): void {
     this._dronesLoading.set(true);
     this._dronesError.set(null);
 
-    this.dronesApi.list(this._currentFilters()).subscribe({
-      next: (drones) => {
-        this._drones.set(drones);
+    this.dronesApi.listLatest(this._currentFilters()).subscribe({
+      next: (page) => {
+        this._drones.set(page.items);
         this._dronesLoading.set(false);
+
+        const selectedId = this._selectedDroneId();
+        if (selectedId !== null && !page.items.some((drone) => drone.drone_id === selectedId)) {
+          this.clearSelection();
+        }
       },
       error: (err: HttpErrorResponse) => {
         this._dronesError.set(extractErrorMessage(err));
@@ -80,6 +106,56 @@ export class DashboardStateService {
         this._pipelineRunsLoading.set(false);
       },
     });
+  }
+
+  /**
+   * Selects a drone and fetches its path history, or — if that drone is
+   * already selected — deselects it (a simple, predictable toggle).
+   * Selecting a different drone always replaces any previous selection.
+   *
+   * Stale-response guard: each history request closes over the
+   * `droneId` it was made for, and both the success and error callbacks
+   * re-check `this._selectedDroneId() === droneId` before applying
+   * anything. If the user selects a different drone (or deselects)
+   * before this request resolves, a late response for the OLD drone_id
+   * is simply dropped — it can never overwrite a newer selection or
+   * resurrect history after a deselect.
+   */
+  selectDrone(droneId: string): void {
+    if (this._selectedDroneId() === droneId) {
+      this.clearSelection();
+      return;
+    }
+
+    this._selectedDroneId.set(droneId);
+    this._selectedDroneHistory.set([]);
+    this._historyLoading.set(true);
+    this._historyError.set(null);
+
+    this.dronesApi.getHistory(droneId).subscribe({
+      next: (history) => {
+        if (this._selectedDroneId() !== droneId) {
+          return; // Stale response — selection has since changed.
+        }
+        this._selectedDroneHistory.set(history);
+        this._historyLoading.set(false);
+      },
+      error: (err: HttpErrorResponse) => {
+        if (this._selectedDroneId() !== droneId) {
+          return; // Stale response — selection has since changed.
+        }
+        this._historyError.set(extractErrorMessage(err));
+        this._historyLoading.set(false);
+      },
+    });
+  }
+
+  /** Deselects the current drone (if any) and clears its path/history/error state. */
+  clearSelection(): void {
+    this._selectedDroneId.set(null);
+    this._selectedDroneHistory.set([]);
+    this._historyLoading.set(false);
+    this._historyError.set(null);
   }
 
   /**
