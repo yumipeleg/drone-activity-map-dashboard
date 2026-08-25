@@ -1,7 +1,7 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { API_BASE_URL } from '../../core/api/api-config';
 import { DronePage } from '../../core/models/drone-page';
 import { DroneTelemetry } from '../../core/models/drone-telemetry';
@@ -48,9 +48,30 @@ function completedRun(overrides: Partial<PipelineRun> = {}): PipelineRun {
   };
 }
 
+function queuedRun(overrides: Partial<PipelineRun> = {}): PipelineRun {
+  return completedRun({
+    status: 'queued',
+    finished_at: null,
+    total_records: 0,
+    valid_records: 0,
+    invalid_records: 0,
+    duplicate_records: 0,
+    error_message: null,
+    ...overrides,
+  });
+}
+
 describe('DashboardStateService', () => {
   let service: DashboardStateService;
   let httpMock: HttpTestingController;
+
+  function expectPipelineRunsList() {
+    return httpMock.expectOne((r) => r.url === `${API_BASE_URL}/api/pipeline/runs` && r.method === 'GET');
+  }
+
+  function expectGetRun(runId: number) {
+    return httpMock.expectOne(`${API_BASE_URL}/api/pipeline/runs/${runId}`);
+  }
 
   beforeEach(() => {
     TestBed.configureTestingModule({
@@ -222,46 +243,159 @@ describe('DashboardStateService', () => {
     expect(service.selectedDroneHistory()).toEqual([]);
   });
 
-  it('runPipeline(): on domain "completed", refreshes drones (latest_only + current filters) and pipeline runs; clears any previous error', () => {
-    service.applyFilters({ droneType: 'Quadcopter' });
-    expectDronesRequest().flush(page([]));
+  it('runPipeline(): POST queued starts polling the returned run id', () => {
+    vi.useFakeTimers();
 
     service.runPipeline();
     expect(service.pipelineRunning()).toBe(true);
 
-    httpMock.expectOne(`${API_BASE_URL}/api/pipeline/run`).flush(completedRun());
+    httpMock.expectOne(`${API_BASE_URL}/api/pipeline/run`).flush(queuedRun({ id: 42 }));
+    expectPipelineRunsList().flush([queuedRun({ id: 42 })]);
+
+    vi.advanceTimersByTime(0);
+    expectGetRun(42).flush(completedRun({ id: 42 }));
+
+    expectDronesRequest().flush(page([SAMPLE_DRONE]));
+    expectPipelineRunsList().flush([completedRun({ id: 42 })]);
+
     expect(service.pipelineRunning()).toBe(false);
     expect(service.pipelineError()).toBeNull();
+    httpMock.expectNone(`${API_BASE_URL}/api/pipeline/runs/42`);
 
-    httpMock.expectOne((r) => r.url === `${API_BASE_URL}/api/pipeline/runs`).flush([completedRun()]);
+    vi.useRealTimers();
+  });
+
+  it('runPipeline(): queued → completed refreshes drones and pipeline history once at terminal status', () => {
+    vi.useFakeTimers();
+
+    service.applyFilters({ droneType: 'Quadcopter' });
+    expectDronesRequest().flush(page([]));
+
+    service.runPipeline();
+
+    httpMock.expectOne(`${API_BASE_URL}/api/pipeline/run`).flush(queuedRun({ id: 7 }));
+    expectPipelineRunsList().flush([queuedRun({ id: 7 })]);
+
+    vi.advanceTimersByTime(0);
+    expectGetRun(7).flush(queuedRun({ id: 7 }));
+    expect(service.pipelineRunning()).toBe(true);
+
+    vi.advanceTimersByTime(1000);
+    expectGetRun(7).flush(completedRun({ id: 7 }));
+
     const dronesReq = expectDronesRequest();
     expect(dronesReq.request.params.get('drone_type')).toBe('Quadcopter');
     expect(dronesReq.request.params.get('latest_only')).toBe('true');
     dronesReq.flush(page([SAMPLE_DRONE]));
+    expectPipelineRunsList().flush([completedRun({ id: 7 })]);
 
+    expect(service.pipelineRunning()).toBe(false);
+    expect(service.pipelineError()).toBeNull();
     expect(service.drones()).toEqual([SAMPLE_DRONE]);
+    httpMock.expectNone(`${API_BASE_URL}/api/pipeline/runs/7`);
     httpMock.expectNone(`${API_BASE_URL}/api/stats`);
+
+    vi.useRealTimers();
   });
 
-  it('runPipeline(): on domain "failed", exposes error_message and still refreshes drones and pipeline runs', () => {
-    const failedRun = completedRun({ status: 'failed', valid_records: 3, error_message: 'Input file not found' });
+  it('runPipeline(): queued → started → completed polls until terminal status', () => {
+    vi.useFakeTimers();
 
     service.runPipeline();
 
-    httpMock.expectOne(`${API_BASE_URL}/api/pipeline/run`).flush(failedRun);
+    httpMock.expectOne(`${API_BASE_URL}/api/pipeline/run`).flush(queuedRun({ id: 9 }));
+    expectPipelineRunsList().flush([queuedRun({ id: 9 })]);
+
+    vi.advanceTimersByTime(0);
+    expectGetRun(9).flush(queuedRun({ id: 9 }));
+
+    vi.advanceTimersByTime(1000);
+    expectGetRun(9).flush(
+      completedRun({ id: 9, status: 'started', finished_at: null, total_records: 0, valid_records: 0 }),
+    );
+
+    vi.advanceTimersByTime(1000);
+    expectGetRun(9).flush(completedRun({ id: 9 }));
+
+    expectDronesRequest().flush(page([SAMPLE_DRONE]));
+    expectPipelineRunsList().flush([completedRun({ id: 9 })]);
+
+    expect(service.pipelineRunning()).toBe(false);
+    httpMock.expectNone(`${API_BASE_URL}/api/pipeline/runs/9`);
+
+    vi.useRealTimers();
+  });
+
+  it('runPipeline(): failed terminal result refreshes drones and pipeline history and sets pipelineError', () => {
+    vi.useFakeTimers();
+
+    const failedRun = completedRun({
+      id: 3,
+      status: 'failed',
+      valid_records: 3,
+      error_message: 'Input file not found',
+    });
+
+    service.runPipeline();
+
+    httpMock.expectOne(`${API_BASE_URL}/api/pipeline/run`).flush(queuedRun({ id: 3 }));
+    expectPipelineRunsList().flush([queuedRun({ id: 3 })]);
+
+    vi.advanceTimersByTime(0);
+    expectGetRun(3).flush(failedRun);
+
+    expectDronesRequest().flush(page([SAMPLE_DRONE]));
+    expectPipelineRunsList().flush([failedRun]);
 
     expect(service.pipelineRunning()).toBe(false);
     expect(service.pipelineError()).toBe('Input file not found');
-
-    expectDronesRequest().flush(page([SAMPLE_DRONE]));
-    httpMock.expectOne((r) => r.url === `${API_BASE_URL}/api/pipeline/runs`).flush([failedRun]);
-
     expect(service.drones()).toEqual([SAMPLE_DRONE]);
     expect(service.pipelineRuns()).toEqual([failedRun]);
     httpMock.expectNone(`${API_BASE_URL}/api/stats`);
+
+    vi.useRealTimers();
   });
 
-  it('runPipeline(): on an HTTP-level failure, sets pipelineError and does not refresh anything', () => {
+  it('runPipeline(): HTTP 503 on POST does not start polling and exposes backend error_message', () => {
+    const enqueueFailed = completedRun({
+      id: 11,
+      status: 'failed',
+      error_message: 'Failed to enqueue pipeline run: Connection refused',
+    });
+
+    service.runPipeline();
+
+    httpMock
+      .expectOne(`${API_BASE_URL}/api/pipeline/run`)
+      .flush(enqueueFailed, { status: 503, statusText: 'Service Unavailable' });
+
+    expect(service.pipelineRunning()).toBe(false);
+    expect(service.pipelineError()).toBe('Failed to enqueue pipeline run: Connection refused');
+    httpMock.expectNone(`${API_BASE_URL}/api/pipeline/runs/11`);
+    httpMock.expectNone(`${API_BASE_URL}/api/drones`);
+  });
+
+  it('runPipeline(): does not start a second POST while pipelineRunning is true', () => {
+    vi.useFakeTimers();
+
+    service.runPipeline();
+
+    const postReq = httpMock.expectOne(`${API_BASE_URL}/api/pipeline/run`);
+    service.runPipeline();
+
+    httpMock.expectNone(`${API_BASE_URL}/api/pipeline/run`);
+
+    postReq.flush(queuedRun({ id: 1 }));
+    expectPipelineRunsList().flush([queuedRun({ id: 1 })]);
+    vi.advanceTimersByTime(0);
+    expectGetRun(1).flush(completedRun({ id: 1 }));
+    expectDronesRequest().flush(page([]));
+    expectPipelineRunsList().flush([completedRun({ id: 1 })]);
+
+    vi.useRealTimers();
+  });
+
+  it('runPipeline(): on an HTTP-level POST failure, sets pipelineError and does not refresh anything', () => {
     service.runPipeline();
 
     httpMock

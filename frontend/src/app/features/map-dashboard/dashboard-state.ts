@@ -1,11 +1,13 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
+import { EMPTY } from 'rxjs';
+import { catchError, finalize, first, switchMap, timer } from 'rxjs';
 import { extractErrorMessage } from '../../core/api/http-error';
 import { DronesApiService } from '../../core/api/drones-api';
 import { PipelineApiService } from '../../core/api/pipeline-api';
 import { DroneFilters } from '../../core/models/drone-filters';
 import { DroneTelemetry } from '../../core/models/drone-telemetry';
-import { PipelineRun } from '../../core/models/pipeline-run';
+import { PipelineRun, PipelineRunStatus } from '../../core/models/pipeline-run';
 
 /**
  * Owns the dashboard's shared state and all orchestration between the two
@@ -19,6 +21,8 @@ import { PipelineRun } from '../../core/models/pipeline-run';
  */
 @Injectable({ providedIn: 'root' })
 export class DashboardStateService {
+  private static readonly POLL_MS = 1000;
+
   private readonly dronesApi = inject(DronesApiService);
   private readonly pipelineApi = inject(PipelineApiService);
 
@@ -159,37 +163,56 @@ export class DashboardStateService {
   }
 
   /**
-   * Triggers the (currently synchronous) pipeline run. `POST
-   * /api/pipeline/run` returns HTTP 200 even when the run's own domain
-   * `status` ends up "failed" — only a real HTTP-level failure (network
-   * error, HTTP 500) reaches the `error` branch below.
+   * Accepts a new pipeline run (HTTP 202 + queued) and polls
+   * `GET /api/pipeline/runs/{id}` until the run reaches a terminal status.
    *
-   * Both drones and pipeline runs are refreshed for *every* HTTP-level
-   * response, regardless of domain `status`: the backend commits valid
-   * telemetry rows individually, so a "failed" run may still have
-   * persisted some rows before the failure — refreshing only the run
-   * history in that case would leave the map showing stale data.
+   * Refreshes drones and pipeline run history once on `completed` or
+   * `failed` — the backend may persist partial telemetry before a failed
+   * run finishes, so the map must refresh even on failure.
    */
   runPipeline(): void {
+    if (this._pipelineRunning()) {
+      return;
+    }
+
     this._pipelineRunning.set(true);
     this._pipelineError.set(null);
 
-    this.pipelineApi.runPipeline().subscribe({
-      next: (run) => {
-        this._pipelineRunning.set(false);
+    this.pipelineApi
+      .runPipeline()
+      .pipe(
+        switchMap((queuedRun) => {
+          this.refreshPipelineRuns();
+          return timer(0, DashboardStateService.POLL_MS).pipe(
+            switchMap(() => this.pipelineApi.getRun(queuedRun.id)),
+            first((run) => !this.isInProgress(run.status)),
+          );
+        }),
+        catchError((err: HttpErrorResponse) => {
+          this._pipelineError.set(this.extractPipelineError(err));
+          return EMPTY;
+        }),
+        finalize(() => this._pipelineRunning.set(false)),
+      )
+      .subscribe((finalRun) => {
         this.refreshDrones();
         this.refreshPipelineRuns();
 
-        if (run.status !== 'completed') {
-          // "failed" (or, defensively, any other non-"completed" status):
-          // a real, fully persisted domain outcome, not a successful run.
-          this._pipelineError.set(run.error_message ?? 'Pipeline run failed.');
+        if (finalRun.status === 'failed') {
+          this._pipelineError.set(finalRun.error_message ?? 'Pipeline run failed.');
         }
-      },
-      error: (err: HttpErrorResponse) => {
-        this._pipelineRunning.set(false);
-        this._pipelineError.set(extractErrorMessage(err));
-      },
-    });
+      });
+  }
+
+  private isInProgress(status: PipelineRunStatus): boolean {
+    return status === 'queued' || status === 'started';
+  }
+
+  private extractPipelineError(err: HttpErrorResponse): string {
+    const body = err.error as Partial<PipelineRun> | null;
+    if (typeof body?.error_message === 'string' && body.error_message.trim().length > 0) {
+      return body.error_message;
+    }
+    return extractErrorMessage(err);
   }
 }

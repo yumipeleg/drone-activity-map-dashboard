@@ -85,6 +85,11 @@ thead th {
   color: #93370d;
 }
 
+.status-badge.queued {
+  background: #e0eaff;
+  color: #175cd3;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
