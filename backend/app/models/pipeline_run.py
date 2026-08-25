@@ -32,8 +32,8 @@ class PipelineRun(Base):
     status: Mapped[PipelineRunStatus] = mapped_column(
         pipeline_run_status_type,
         nullable=False,
-        default=PipelineRunStatus.STARTED,
-        server_default=PipelineRunStatus.STARTED.value,
+        default=PipelineRunStatus.QUEUED,
+        server_default=PipelineRunStatus.QUEUED.value,
     )
 
     total_records: Mapped[int] = mapped_column(

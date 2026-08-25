@@ -25,5 +25,8 @@ class Settings(BaseSettings):
     # of the working directory the process was started from.
     pipeline_input_file: str = str(_BACKEND_DIR / "data" / "sample_drones.json")
 
+    # Celery message broker — Redis only; no result backend is configured.
+    celery_broker_url: str = "redis://localhost:6379/0"
+
 
 settings = Settings()

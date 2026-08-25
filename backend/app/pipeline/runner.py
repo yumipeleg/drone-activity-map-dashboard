@@ -7,14 +7,15 @@ later, with zero rewriting. See AGENTS.md.
 
 Split into two steps to mirror the future FastAPI/Celery process boundary:
 
-- `create_pipeline_run(db)` — creates and commits a new `STARTED` row using
+- `create_pipeline_run(db)` — creates and commits a new `QUEUED` row using
   a session the *caller* owns (e.g. a FastAPI route's `Depends(get_db)`
   session). Returns the ORM object so the caller can read its `id` while
   that session is still open.
 - `execute_pipeline_run(pipeline_run_id, input_path=None)` — takes only a
   plain `pipeline_run_id` (never a live session or ORM object) and opens
-  and closes its own `SessionLocal`. This is the function a future Celery
-  task will call with just the id it was enqueued with.
+  and closes its own `SessionLocal`. Transitions `QUEUED` → `STARTED` before
+  processing. This is the function a Celery task will call with just the id
+  it was enqueued with.
 
 `run_pipeline(input_path=None)` remains a backward-compatible synchronous
 wrapper: `create_pipeline_run` (its own session) followed by
@@ -60,15 +61,16 @@ class PipelineResult:
 
 
 def create_pipeline_run(db: Session) -> PipelineRun:
-    """Creates and commits a new `PipelineRun` row with status `STARTED`.
+    """Creates and commits a new `PipelineRun` row with status `QUEUED`.
 
     Uses the session passed in by the caller — this function does not open
-    or close a session itself. That caller today is `run_pipeline()`'s own
-    short-lived session; later it will be a FastAPI route's
-    `Depends(get_db)` session, which enqueues `run.id` for a Celery task
-    instead of continuing on to execute the run inline.
+    or close a session itself. `started_at` is set at creation to represent
+    the beginning of the run lifecycle / request acceptance. That caller
+    today is `run_pipeline()`'s own short-lived session; later it will be a
+    FastAPI route's `Depends(get_db)` session, which enqueues `run.id` for a
+    Celery task instead of continuing on to execute the run inline.
     """
-    run = PipelineRun(status=PipelineRunStatus.STARTED, started_at=_utc_now())
+    run = PipelineRun(status=PipelineRunStatus.QUEUED, started_at=_utc_now())
     db.add(run)
     db.commit()
     return run
@@ -92,9 +94,9 @@ def execute_pipeline_run(pipeline_run_id: int, input_path: str | Path | None = N
     deliberately kept out of this function.
 
     Raises `ValueError` if `pipeline_run_id` does not refer to an existing
-    `PipelineRun` row — that is a programming/infrastructure error (e.g. a
-    stale or corrupted id), not a normal pipeline-processing failure, so
-    there is no row to update with a `FAILED` status.
+    `PipelineRun` row, or if the run is already in a terminal status
+    (`COMPLETED` / `FAILED`) — those are programming/infrastructure errors,
+    not normal pipeline-processing failures.
     """
     path = Path(input_path) if input_path is not None else Path(settings.pipeline_input_file)
 
@@ -103,6 +105,16 @@ def execute_pipeline_run(pipeline_run_id: int, input_path: str | Path | None = N
     if run is None:
         db.close()
         raise ValueError(f"PipelineRun {pipeline_run_id} does not exist")
+
+    if run.status in (PipelineRunStatus.COMPLETED, PipelineRunStatus.FAILED):
+        db.close()
+        raise ValueError(
+            f"PipelineRun {pipeline_run_id} is already in terminal status {run.status.value}"
+        )
+
+    if run.status == PipelineRunStatus.QUEUED:
+        run.status = PipelineRunStatus.STARTED
+        db.commit()
 
     total = valid = invalid = duplicate = 0
     status = PipelineRunStatus.COMPLETED
