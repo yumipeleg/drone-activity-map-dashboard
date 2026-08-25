@@ -81,7 +81,7 @@ def execute_pipeline_run(pipeline_run_id: int, input_path: str | Path | None = N
 
     Receives only a plain `pipeline_run_id` (and an optional input path) —
     never a live session or ORM object — so this is directly callable from
-    a future Celery task with exactly what a task message can carry. Opens
+    a Celery task with exactly what a task message can carry. Opens
     and closes its own `SessionLocal`, matching a worker process that has
     no session of its own to reuse.
 

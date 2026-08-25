@@ -5,6 +5,11 @@
 .pytest_cache/
 backend/.venv/
 
+# Node / Angular
+node_modules/
+frontend/dist/
+frontend/.angular/
+
 # Environment files — never commit real secrets/credentials.
 .env
 backend/.env

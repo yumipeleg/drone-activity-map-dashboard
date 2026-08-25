@@ -52,9 +52,9 @@ work, those govern *what* to build.
 
 **Pipeline input:** JSON file (initial source).
 
-**Deferred to bonus phases:** Docker Compose, Celery, Redis, pagination,
-low-battery/lost-signal highlighting, latest-position/path-history views,
-expanded test coverage.
+**Deferred / out of scope:** Redis persistence, advanced Celery retry
+infrastructure, Flower monitoring, reverse proxy, expanded test coverage
+beyond what the project already includes.
 
 ## Code Quality Expectations
 
@@ -69,13 +69,11 @@ expanded test coverage.
 
 ## Local Environment Notes
 
-See the environment report from the initial setup phase for exact installed
-tool versions. Key points to keep in mind while implementing:
+Docker Compose is the recommended evaluator path (`docker compose up --build`).
+For local Python development without containers, ensure PostgreSQL is running
+(for example via the Compose `db` service) and copy `backend/.env.example` to
+`backend/.env`.
 
-- Docker/Docker Compose were not detected on this machine as of initial
-  setup — Docker Compose work (a bonus phase) will need Docker installed
-  first, or will need to be validated by the user in an environment that has
-  it.
 - Python on this machine is a very recent version; if any backend dependency
   lacks a pre-built wheel for it, prefer using the `psycopg` (v3) PostgreSQL
   driver over `psycopg2`, and flag any install friction rather than silently
