@@ -13,11 +13,13 @@ selected and prepared, which is what makes this safe to do unconditionally.
 import json
 from pathlib import Path
 
+import pytest
+
 from app.db.session import SessionLocal
 from app.models.drone_telemetry import DroneTelemetry
 from app.models.enums import PipelineRunStatus
 from app.models.pipeline_run import PipelineRun
-from app.pipeline.runner import run_pipeline
+from app.pipeline.runner import create_pipeline_run, execute_pipeline_run, run_pipeline
 
 VALID_RECORD = {
     "drone_id": "DRONE-001",
@@ -114,6 +116,91 @@ def test_pipeline_run_counters_are_consistent(tmp_path: Path) -> None:
     )
 
     with SessionLocal() as db:
+        run = db.get(PipelineRun, result.pipeline_run_id)
+        assert run is not None
+        assert run.status == PipelineRunStatus.COMPLETED
+
+
+# --- create_pipeline_run / execute_pipeline_run (Celery-ready split) --------
+
+
+def test_create_pipeline_run_creates_exactly_one_started_row() -> None:
+    with SessionLocal() as db:
+        run = create_pipeline_run(db)
+
+        assert run.id is not None
+        assert run.status == PipelineRunStatus.STARTED
+        assert run.started_at is not None
+        assert run.finished_at is None
+
+    with SessionLocal() as db:
+        assert db.query(PipelineRun).count() == 1
+        persisted = db.get(PipelineRun, run.id)
+        assert persisted is not None
+        assert persisted.status == PipelineRunStatus.STARTED
+
+
+def test_execute_pipeline_run_executes_and_finalizes_an_existing_row(tmp_path: Path) -> None:
+    input_path = _write_input(tmp_path, [VALID_RECORD, INVALID_RECORD])
+
+    with SessionLocal() as db:
+        created = create_pipeline_run(db)
+        run_id = created.id
+
+    result = execute_pipeline_run(run_id, input_path)
+
+    assert result.pipeline_run_id == run_id
+    assert result.status == PipelineRunStatus.COMPLETED
+    assert result.total_records == 2
+    assert result.valid_records == 1
+    assert result.invalid_records == 1
+    assert result.duplicate_records == 0
+
+    with SessionLocal() as db:
+        assert db.query(DroneTelemetry).count() == 1
+        run = db.get(PipelineRun, run_id)
+        assert run is not None
+        assert run.status == PipelineRunStatus.COMPLETED
+        assert run.finished_at is not None
+
+
+def test_execute_pipeline_run_does_not_create_another_pipeline_run(tmp_path: Path) -> None:
+    input_path = _write_input(tmp_path, [VALID_RECORD])
+
+    with SessionLocal() as db:
+        created = create_pipeline_run(db)
+        run_id = created.id
+
+    execute_pipeline_run(run_id, input_path)
+
+    with SessionLocal() as db:
+        assert db.query(PipelineRun).count() == 1
+
+
+def test_execute_pipeline_run_raises_value_error_for_nonexistent_run_id(tmp_path: Path) -> None:
+    input_path = _write_input(tmp_path, [VALID_RECORD])
+    nonexistent_run_id = 999_999
+
+    with pytest.raises(ValueError, match=str(nonexistent_run_id)):
+        execute_pipeline_run(nonexistent_run_id, input_path)
+
+    with SessionLocal() as db:
+        assert db.query(PipelineRun).count() == 0
+        assert db.query(DroneTelemetry).count() == 0
+
+
+def test_run_pipeline_remains_backward_compatible_and_creates_exactly_one_run(
+    tmp_path: Path,
+) -> None:
+    input_path = _write_input(tmp_path, [VALID_RECORD])
+
+    result = run_pipeline(input_path)
+
+    assert result.status == PipelineRunStatus.COMPLETED
+    assert result.valid_records == 1
+
+    with SessionLocal() as db:
+        assert db.query(PipelineRun).count() == 1
         run = db.get(PipelineRun, result.pipeline_run_id)
         assert run is not None
         assert run.status == PipelineRunStatus.COMPLETED
