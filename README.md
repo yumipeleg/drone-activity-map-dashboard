@@ -36,6 +36,42 @@ docker compose down -v
 
 Compose starts PostgreSQL, Redis, the FastAPI backend (Alembic migrations run on startup), a Celery worker, and the Angular frontend — no separate Python or npm setup is required for evaluation.
 
+## Local Development (Optional)
+
+Docker Compose above remains the recommended evaluator path. Running components individually requires installing dependencies and copying `backend/.env.example` to `backend/.env`.
+
+Start only the infrastructure services:
+
+```bash
+docker compose up db redis -d
+cd backend
+pip install -r requirements-dev.txt
+alembic upgrade head
+```
+
+Backend API (from `backend/`):
+
+```bash
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Celery worker — required for `POST /api/pipeline/run` to complete (from `backend/`):
+
+```bash
+celery -A app.celery_app worker --loglevel=info
+```
+
+On native Windows, add `--pool=solo` (Celery's default prefork pool is not supported there).
+
+Frontend dev server (from `frontend/`):
+
+```bash
+npm install
+npm start
+```
+
+API: http://localhost:8000 · Frontend: http://localhost:4200
+
 ## What to Try
 
 - Click **Run Pipeline** and watch status move from `queued` → `started` → `completed` or `failed`.
@@ -113,14 +149,14 @@ Invalid records are skipped and counted; duplicates are counted separately. Exec
 
 ### Backend
 
-Requires a running PostgreSQL instance (the Compose `db` service is sufficient). Copy `backend/.env.example` to `backend/.env` if you do not already have one — tests read `DATABASE_URL` from that file and automatically use a separate `drone_activity_test` database.
+Requires a running PostgreSQL instance (the Compose `db` service is sufficient), `backend/.env` copied from `.env.example`, and dependencies installed in a virtualenv (`pip install -r requirements-dev.txt`). Tests automatically use a separate `drone_activity_test` database.
 
 ```bash
 cd backend
 python -m pytest
 ```
 
-**63 tests passing.** Requires PostgreSQL (the Compose `db` service is sufficient), `backend/.env` copied from `.env.example`, and dependencies installed in a virtualenv (`pip install -r requirements-dev.txt`).
+**63 tests passing.**
 
 ### Frontend
 

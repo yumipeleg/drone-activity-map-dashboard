@@ -1,26 +1,25 @@
 """Pipeline runner — orchestrates load -> normalize/validate -> detect
 duplicates -> persist -> update PipelineRun status.
 
-This module must never import FastAPI or Celery: the exact same functions
-are meant to be called from an API route today and from a Celery task
-later, with zero rewriting. See AGENTS.md.
+This module must never import FastAPI or Celery. See AGENTS.md.
 
-Split into two steps to mirror the future FastAPI/Celery process boundary:
+Production flow (async):
+  FastAPI creates a `QUEUED` `PipelineRun` via `create_pipeline_run(db)`,
+  enqueues a Celery task with the run id, and returns HTTP 202. The worker
+  calls `execute_pipeline_run(run_id)`.
 
-- `create_pipeline_run(db)` — creates and commits a new `QUEUED` row using
-  a session the *caller* owns (e.g. a FastAPI route's `Depends(get_db)`
-  session). Returns the ORM object so the caller can read its `id` while
-  that session is still open.
+Split deliberately across two entry points:
+
+- `create_pipeline_run(db)` — creates and commits a `QUEUED` row using a
+  session the caller owns (the FastAPI route's `Depends(get_db)` session).
 - `execute_pipeline_run(pipeline_run_id, input_path=None)` — takes only a
-  plain `pipeline_run_id` (never a live session or ORM object) and opens
-  and closes its own `SessionLocal`. Transitions `QUEUED` → `STARTED` before
-  processing. This is the function a Celery task will call with just the id
-  it was enqueued with.
+  plain `pipeline_run_id`, opens its own `SessionLocal`, transitions
+  `QUEUED` → `STARTED` before processing, and finalizes the run. Called by
+  the Celery task (`pipeline.execute_run`).
 
-`run_pipeline(input_path=None)` remains a backward-compatible synchronous
-wrapper: `create_pipeline_run` (its own session) followed by
-`execute_pipeline_run` (a separate session), exactly what the route calls
-today.
+`run_pipeline(input_path=None)` is a synchronous compatibility wrapper for
+tests and scripts: `create_pipeline_run` (own session) then
+`execute_pipeline_run` (separate session).
 """
 
 from dataclasses import dataclass
@@ -65,10 +64,9 @@ def create_pipeline_run(db: Session) -> PipelineRun:
 
     Uses the session passed in by the caller — this function does not open
     or close a session itself. `started_at` is set at creation to represent
-    the beginning of the run lifecycle / request acceptance. That caller
-    today is `run_pipeline()`'s own short-lived session; later it will be a
-    FastAPI route's `Depends(get_db)` session, which enqueues `run.id` for a
-    Celery task instead of continuing on to execute the run inline.
+    the beginning of the run lifecycle / request acceptance. In production,
+    the FastAPI route calls this, reads `run.id`, and enqueues
+    `run_pipeline_task.delay(run.id)` without executing the pipeline inline.
     """
     run = PipelineRun(status=PipelineRunStatus.QUEUED, started_at=_utc_now())
     db.add(run)
@@ -88,10 +86,10 @@ def execute_pipeline_run(pipeline_run_id: int, input_path: str | Path | None = N
     Never raises for a "normal" failure (a bad input file, a bad record, a
     duplicate, or an unexpected DB error) — those are all captured in the
     returned `PipelineResult.status` / `error_message`, with the
-    `PipelineRun` row updated to match. A Celery task added later can
-    inspect the returned status and decide for itself whether a "failed"
-    result should also raise a task-level exception; that decision is
-    deliberately kept out of this function.
+    `PipelineRun` row updated to match. The Celery task wrapper may
+    inspect the returned status and decide whether a failed result should
+    also raise a task-level exception; that decision is deliberately kept
+    out of this function.
 
     Raises `ValueError` if `pipeline_run_id` does not refer to an existing
     `PipelineRun` row, or if the run is already in a terminal status
@@ -177,10 +175,9 @@ def run_pipeline(input_path: str | Path | None = None) -> PipelineResult:
 
     Uses two independently-owned DB sessions — one to create the
     `PipelineRun` row, a separate one (inside `execute_pipeline_run`) to run
-    and finalize it — deliberately mirroring the future FastAPI/Celery
-    process boundary, where "create" and "execute" will run in genuinely
-    different processes. Only the plain `pipeline_run_id` crosses that
-    boundary, never a live session or ORM object.
+    and finalize it — mirroring the production create/execute split where
+    only the plain `pipeline_run_id` crosses the FastAPI/Celery boundary,
+    never a live session or ORM object.
     """
     db = SessionLocal()
     try:
