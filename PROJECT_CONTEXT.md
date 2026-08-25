@@ -156,11 +156,15 @@ Implemented (Day 4) — see [`ARCHITECTURE.md`](./ARCHITECTURE.md) for details:
 - `GET /api/stats` backend endpoint and fleet-wide summary semantics.
 - Meaningful unit/integration tests for all of the above.
 
-Not yet implemented (Day 5):
+Implemented (Day 5):
 
-- Docker Compose (frontend, backend, and worker/broker services — database
-  already runs via Compose).
-- Celery background worker + Redis broker for pipeline execution.
+- Celery background worker + Redis broker for async pipeline execution
+  (`POST /api/pipeline/run` → HTTP 202 → worker → frontend polling).
+- Full Docker Compose stack (`db`, `redis`, `backend`, `worker`, `frontend`).
+  Backend runs Alembic migrations on startup before serving.
+
+Not yet implemented:
+
 - Final README / setup instructions.
 
 ### Important Architectural Rule

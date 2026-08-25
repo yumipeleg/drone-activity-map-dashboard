@@ -508,27 +508,38 @@ frontend/
   same helper via `getMarkerLegendEntries()` so swatches stay in sync with
   live markers.
 
-## Pipeline / Worker Evolution Path (for later bonus phases)
+## Pipeline / Worker (Day 5 — implemented)
 
-1. **Now**: FastAPI's `POST /api/pipeline/run` calls
-   `pipeline.runner.run_pipeline(...)` synchronously in-process.
-2. **Later (bonus)**: a Celery task wraps the same
-   `pipeline.runner.run_pipeline(...)` call; FastAPI enqueues the task
-   instead of running it inline. Redis is the broker. No pipeline code
-   changes — only a new thin Celery task module and a change in what the API
-   route calls.
+1. **API**: `POST /api/pipeline/run` creates a `QUEUED` `PipelineRun`, enqueues
+   `run_pipeline_task` via Celery, and returns HTTP 202 immediately.
+2. **Worker**: `pipeline.execute_run` calls `execute_pipeline_run(run_id)` — the
+   same framework-independent runner used in tests. Redis is the broker only;
+   no result backend.
+3. **Frontend**: polls `GET /api/pipeline/runs/{id}` until `completed`/`failed`,
+   then refreshes drones and run history.
 
-This evolution is only possible because the pipeline runner was never given
-a FastAPI or Celery dependency in the first place.
+The pipeline runner still has no FastAPI or Celery import — only thin wrappers
+at the API and task boundaries invoke it.
+
+## Docker Compose (Day 5 — implemented)
+
+`docker compose up --build` starts five services on the default Compose network:
+
+| Service | Role |
+|---------|------|
+| `db` | PostgreSQL 16 |
+| `redis` | Celery broker |
+| `backend` | FastAPI — runs `alembic upgrade head` then Uvicorn on startup |
+| `worker` | Celery worker — same backend image, `celery -A app.celery_app worker` |
+| `frontend` | nginx serving the Angular production build |
+
+Browser: `http://localhost:4200` · API: `http://localhost:8000` (direct CORS,
+no reverse proxy). The worker starts only after the backend healthcheck passes
+(migrations complete). Sample pipeline input: `backend/data/sample_drones.json`
+baked into the backend image at `/app/data/sample_drones.json`.
 
 ## What Is Deliberately Not Decided Yet
 
-Everything below is Day 5 scope:
-
-- Docker Compose file contents beyond PostgreSQL (`backend`, `worker`,
-  `redis`, `frontend` services).
-- Celery/Redis wiring details, async `POST /api/pipeline/run` (`HTTP 202` +
-  `run_id`), and frontend polling of `GET /api/pipeline/runs/{run_id}`.
 - Final README / setup instructions.
 
 Day 4 (latest position per drone, drone path history, low-battery/
