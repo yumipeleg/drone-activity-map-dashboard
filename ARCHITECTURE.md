@@ -130,8 +130,8 @@ Note: a `repositories/` layer was sketched here originally but has not been adde
 - `pipeline/` contains the actual ingestion logic and has zero knowledge of
   HTTP, FastAPI, or Celery. It receives a plain file path, owns its own DB
   session internally, and returns a plain result object (counts, status).
-  This is what lets a future Celery task call
-  `pipeline.runner.run_pipeline(...)` with no changes to that function.
+  This is what lets a Celery task call
+  `pipeline.runner.execute_pipeline_run(...)` with no changes to that function.
 - `models/` (SQLAlchemy) vs `schemas/` (Pydantic) are kept distinct because
   the database shape and the public API shape are allowed to evolve
   independently (e.g. internal columns that are never exposed via the API).
@@ -222,28 +222,18 @@ change later.
 Every route follows **route → service → SQLAlchemy** and returns an explicit
 Pydantic response schema (never a raw ORM object):
 
-- `POST /api/pipeline/run` — calls `pipeline.runner.run_pipeline()` directly
-  (no service layer involved; the runner already owns its own session/
-  transactions). `run_pipeline()` returns a `PipelineResult`, which lacks
-  `started_at`/`finished_at` (its own DB session is already closed by the
-  time it returns). Rather than adding a second, slightly different
-  response schema just for this one endpoint, the route re-fetches the same
-  row by `PipelineResult.pipeline_run_id` via
-  `services.pipeline_runs.get_pipeline_run()` and returns it as a
-  `PipelineRunRead` — the same schema the two `GET` endpoints below use, so
-  "a pipeline run" is one consistent shape everywhere. Always returns
-  **HTTP 200**, even when the run's own persisted `status` is `failed` —
-  that's a normal, fully persisted domain outcome, not an HTTP error. An
-  infrastructure failure severe enough that `run_pipeline()` couldn't even
-  create its `PipelineRun` row surfaces as an actual **HTTP 500** via
-  FastAPI's default unhandled-exception behavior. Kept easy to evolve to
-  `HTTP 202` + `run_id` once Celery is added.
+- `POST /api/pipeline/run` — creates a `QUEUED` `PipelineRun` via
+  `pipeline.runner.create_pipeline_run()`, enqueues `run_pipeline_task` via
+  Celery, and returns **HTTP 202** immediately with the queued run as
+  `PipelineRunRead`. If the broker is unavailable, the row is marked `FAILED`
+  and **HTTP 503** is returned. Processing happens in a Celery worker via
+  `execute_pipeline_run(run_id)`; poll `GET /api/pipeline/runs/{id}` for the
+  final `completed` or `failed` state.
 - `GET /api/pipeline/runs` — `services.pipeline_runs.list_pipeline_runs()`,
   most-recent-first, capped by an optional `limit` query parameter
   (default 20). No pagination beyond that cap yet.
 - `GET /api/pipeline/runs/{run_id}` — `services.pipeline_runs.get_pipeline_run()`,
-  **HTTP 404** if missing. Added ahead of the exercise's explicit
-  requirements as future preparation for Celery polling.
+  **HTTP 404** if missing. Used by the Angular dashboard to poll async runs.
 - `GET /api/drones` — `services.drones.list_drone_telemetry()` builds one
   SQLAlchemy query with a `.where()` added per provided (optional) filter —
   `drone_type`, `status`, `operator_id`, `min_battery`, and a `from`/`to`
@@ -490,14 +480,16 @@ frontend/
 - **`GET /api/stats` (backend only)**: the backend endpoint and its tests
   exist (Day 4), but the Angular dashboard does not call it or render a
   stats panel — the exercise only requires/proposes the API endpoint itself.
-- `POST /api/pipeline/run` is still synchronous (no Celery yet): on *every*
-  HTTP-level response (regardless of the run's own domain `status`),
-  `DashboardStateService` refreshes drones and pipeline run history — the
-  backend commits valid telemetry rows individually, so even a domain
-  `"failed"` run may have persisted some rows before failing. On
+- **`POST /api/pipeline/run` (async)**: `DashboardStateService.runPipeline()`
+  accepts HTTP 202 with a `queued` run, then polls
+  `GET /api/pipeline/runs/{id}` every second until `completed` or `failed`.
+  While a run is in progress (`queued` or `started`), the UI blocks starting
+  another. Refreshes drones and pipeline run history once on a terminal
+  status — the backend commits valid telemetry rows individually, so even a
+  domain `"failed"` run may have persisted some rows before failing. On
   `status: "failed"`, `error_message` is also surfaced as `pipelineError`.
-  An actual HTTP-level failure (network error, 500) is caught separately,
-  refreshes nothing, and never crashes the dashboard.
+  An actual HTTP-level failure (network error, 503 enqueue failure) is caught
+  separately, refreshes nothing, and never crashes the dashboard.
 - **Marker styling (Day 4)**: `getMarkerStyle(drone)` (`map/marker-style.ts`)
   is a pure function — no Leaflet dependency — returning `CircleMarker`
   options. Four states distinguished by color, fill, and a dashed outline
@@ -508,33 +500,45 @@ frontend/
   same helper via `getMarkerLegendEntries()` so swatches stay in sync with
   live markers.
 
-## Pipeline / Worker Evolution Path (for later bonus phases)
+## Pipeline / Worker (Day 5 — implemented)
 
-1. **Now**: FastAPI's `POST /api/pipeline/run` calls
-   `pipeline.runner.run_pipeline(...)` synchronously in-process.
-2. **Later (bonus)**: a Celery task wraps the same
-   `pipeline.runner.run_pipeline(...)` call; FastAPI enqueues the task
-   instead of running it inline. Redis is the broker. No pipeline code
-   changes — only a new thin Celery task module and a change in what the API
-   route calls.
+1. **API**: `POST /api/pipeline/run` creates a `QUEUED` `PipelineRun`, enqueues
+   `run_pipeline_task` via Celery, and returns HTTP 202 immediately.
+2. **Worker**: `pipeline.execute_run` calls `execute_pipeline_run(run_id)` — the
+   same framework-independent runner used in tests. Redis is the broker only;
+   no result backend.
+3. **Frontend**: polls `GET /api/pipeline/runs/{id}` until `completed`/`failed`,
+   then refreshes drones and run history.
 
-This evolution is only possible because the pipeline runner was never given
-a FastAPI or Celery dependency in the first place.
+The pipeline runner still has no FastAPI or Celery import — only thin wrappers
+at the API and task boundaries invoke it.
+
+## Docker Compose (Day 5 — implemented)
+
+`docker compose up --build` starts five services on the default Compose network:
+
+| Service | Role |
+|---------|------|
+| `db` | PostgreSQL 16 |
+| `redis` | Celery broker |
+| `backend` | FastAPI — runs `alembic upgrade head` then Uvicorn on startup |
+| `worker` | Celery worker — same backend image, `celery -A app.celery_app worker` |
+| `frontend` | nginx serving the Angular production build |
+
+Browser: `http://localhost:4200` · API: `http://localhost:8000` (direct CORS,
+no reverse proxy). The worker starts only after the backend healthcheck passes
+(migrations complete). Sample pipeline input: `backend/data/sample_drones.json`
+baked into the backend image at `/app/data/sample_drones.json`.
 
 ## What Is Deliberately Not Decided Yet
 
-Everything below is Day 5 scope:
-
-- Docker Compose file contents beyond PostgreSQL (`backend`, `worker`,
-  `redis`, `frontend` services).
-- Celery/Redis wiring details, async `POST /api/pipeline/run` (`HTTP 202` +
-  `run_id`), and frontend polling of `GET /api/pipeline/runs/{run_id}`.
-- Final README / setup instructions.
+Nothing blocking evaluation remains open. Redis persistence, advanced Celery
+retry/monitoring (e.g. Flower), and a reverse proxy in front of the API are
+intentionally out of scope.
 
 Day 4 (latest position per drone, drone path history, low-battery/
 lost-signal marker styling, `GET /api/drones` pagination, `GET /api/stats`)
 is finalized — see "Latest Position, Pagination and Stats (finalized in Day
 4)" above and the "State Approach" section for the frontend side.
 
-These remaining items are intentionally deferred per the agreed workflow:
-implement only the phase that's explicitly requested.
+Setup and run instructions live in [`README.md`](./README.md).

@@ -5,7 +5,7 @@
  * `GET /api/pipeline/runs/{id}` alike, since the backend returns the same
  * shape from all three.
  */
-export type PipelineRunStatus = 'started' | 'completed' | 'failed';
+export type PipelineRunStatus = 'queued' | 'started' | 'completed' | 'failed';
 
 export interface PipelineRun {
   id: number;

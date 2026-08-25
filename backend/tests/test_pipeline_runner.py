@@ -124,12 +124,12 @@ def test_pipeline_run_counters_are_consistent(tmp_path: Path) -> None:
 # --- create_pipeline_run / execute_pipeline_run (Celery-ready split) --------
 
 
-def test_create_pipeline_run_creates_exactly_one_started_row() -> None:
+def test_create_pipeline_run_creates_exactly_one_queued_row() -> None:
     with SessionLocal() as db:
         run = create_pipeline_run(db)
 
         assert run.id is not None
-        assert run.status == PipelineRunStatus.STARTED
+        assert run.status == PipelineRunStatus.QUEUED
         assert run.started_at is not None
         assert run.finished_at is None
 
@@ -137,7 +137,7 @@ def test_create_pipeline_run_creates_exactly_one_started_row() -> None:
         assert db.query(PipelineRun).count() == 1
         persisted = db.get(PipelineRun, run.id)
         assert persisted is not None
-        assert persisted.status == PipelineRunStatus.STARTED
+        assert persisted.status == PipelineRunStatus.QUEUED
 
 
 def test_execute_pipeline_run_executes_and_finalizes_an_existing_row(tmp_path: Path) -> None:
@@ -187,6 +187,48 @@ def test_execute_pipeline_run_raises_value_error_for_nonexistent_run_id(tmp_path
     with SessionLocal() as db:
         assert db.query(PipelineRun).count() == 0
         assert db.query(DroneTelemetry).count() == 0
+
+
+def test_execute_pipeline_run_rejects_terminal_completed_run_without_modifying_it(
+    tmp_path: Path,
+) -> None:
+    input_path = _write_input(tmp_path, [VALID_RECORD])
+
+    with SessionLocal() as db:
+        created = create_pipeline_run(db)
+        run_id = created.id
+
+    execute_pipeline_run(run_id, input_path)
+
+    with pytest.raises(ValueError, match="terminal status completed"):
+        execute_pipeline_run(run_id, input_path)
+
+    with SessionLocal() as db:
+        run = db.get(PipelineRun, run_id)
+        assert run is not None
+        assert run.status == PipelineRunStatus.COMPLETED
+        assert db.query(PipelineRun).count() == 1
+
+
+def test_execute_pipeline_run_rejects_terminal_failed_run_without_modifying_it(
+    tmp_path: Path,
+) -> None:
+    missing_path = tmp_path / "does-not-exist.json"
+
+    with SessionLocal() as db:
+        created = create_pipeline_run(db)
+        run_id = created.id
+
+    execute_pipeline_run(run_id, missing_path)
+
+    with pytest.raises(ValueError, match="terminal status failed"):
+        execute_pipeline_run(run_id, missing_path)
+
+    with SessionLocal() as db:
+        run = db.get(PipelineRun, run_id)
+        assert run is not None
+        assert run.status == PipelineRunStatus.FAILED
+        assert db.query(PipelineRun).count() == 1
 
 
 def test_run_pipeline_remains_backward_compatible_and_creates_exactly_one_run(

@@ -25,6 +25,7 @@ class DroneStatus(str, Enum):
 
 
 class PipelineRunStatus(str, Enum):
+    QUEUED = "queued"
     STARTED = "started"
     COMPLETED = "completed"
     FAILED = "failed"

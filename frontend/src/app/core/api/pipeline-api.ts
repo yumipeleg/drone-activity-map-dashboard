@@ -13,7 +13,7 @@ export class PipelineApiService {
   private readonly http = inject(HttpClient);
   private readonly baseUrl = `${API_BASE_URL}/api/pipeline`;
 
-  /** POST /api/pipeline/run — always resolves with the full run, even for a domain-level "failed" status (see DashboardStateService.runPipeline). */
+  /** POST /api/pipeline/run — returns HTTP 202 with a queued run; poll getRun(id) for the terminal state. */
   runPipeline(): Observable<PipelineRun> {
     return this.http.post<PipelineRun>(`${this.baseUrl}/run`, {});
   }

@@ -24,7 +24,7 @@ describe('PipelineApiService', () => {
 
     const req = httpMock.expectOne(`${API_BASE_URL}/api/pipeline/run`);
     expect(req.request.method).toBe('POST');
-    req.flush({ id: 1, status: 'completed' });
+    req.flush({ id: 1, status: 'queued' });
   });
 
   it('listRuns() requests GET /api/pipeline/runs with a limit param', () => {

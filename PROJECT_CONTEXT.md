@@ -60,7 +60,7 @@ A history of pipeline executions is stored, with at least:
 | id              | Unique pipeline run identifier                |
 | started_at      | Pipeline start time                           |
 | finished_at     | Pipeline finish time                          |
-| status          | `started`, `completed`, or `failed`           |
+| status          | `queued`, `started`, `completed`, or `failed` |
 | total_records   | Number of records read from input             |
 | valid_records   | Number of records inserted successfully        |
 | invalid_records | Number of records skipped due to validation    |
@@ -156,19 +156,20 @@ Implemented (Day 4) — see [`ARCHITECTURE.md`](./ARCHITECTURE.md) for details:
 - `GET /api/stats` backend endpoint and fleet-wide summary semantics.
 - Meaningful unit/integration tests for all of the above.
 
-Not yet implemented (Day 5):
+Implemented (Day 5):
 
-- Docker Compose (frontend, backend, and worker/broker services — database
-  already runs via Compose).
-- Celery background worker + Redis broker for pipeline execution.
-- Final README / setup instructions.
+- Celery background worker + Redis broker for async pipeline execution
+  (`POST /api/pipeline/run` → HTTP 202 → worker → frontend polling).
+- Full Docker Compose stack (`db`, `redis`, `backend`, `worker`, `frontend`).
+  Backend runs Alembic migrations on startup before serving.
+- Root [`README.md`](./README.md) with Docker Compose quick start and test instructions.
 
 ### Important Architectural Rule
 
-The core pipeline runner must **not** depend on FastAPI or Celery, so that a
-future Celery task can invoke the exact same pipeline logic without
-rewriting it. FastAPI only triggers the pipeline; Celery would only schedule
-it later. Neither owns the pipeline logic itself.
+The core pipeline runner must **not** depend on FastAPI or Celery, so that the
+Celery task invokes the exact same pipeline logic without rewriting it.
+FastAPI enqueues the run; the worker calls `execute_pipeline_run`. Neither
+owns the pipeline logic itself.
 
 ## Code Quality Principles
 
