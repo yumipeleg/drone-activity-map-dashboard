@@ -1,5 +1,6 @@
 :host {
   display: block;
+  min-height: 0;
 }
 
 .pipeline-runs {
@@ -21,16 +22,26 @@
 
 .table-scroll {
   /* Fills whatever height map-dashboard.css's flex layout allocates to this
-     card; max-height is an unconditional cap (also applies on narrow/
-     stacked layouts, where there's no stretched height to fill) so a large
-     run history scrolls in place instead of growing the whole page.
+     card; max-height is an unconditional cap on narrow/stacked layouts so a
+     large run history scrolls in place instead of growing the whole page.
      overflow-x: auto at all widths — scroll appears only when the table's
      natural width exceeds the available column width (no clipping). */
   flex: 1 1 auto;
   min-height: 0;
-  max-height: 70vh;
   overflow-y: auto;
   overflow-x: auto;
+}
+
+@media (max-width: 1050px) {
+  .table-scroll {
+    max-height: 70vh;
+  }
+}
+
+@media (min-width: 1051px) {
+  :host {
+    height: 100%;
+  }
 }
 
 table {
