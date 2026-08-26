@@ -34,6 +34,10 @@
   min-height: 0;
 }
 
+app-drone-map {
+  min-height: 0;
+}
+
 app-pipeline-control {
   /* Pinned to its own content size at the top of the column. */
   flex: 0 0 auto;
@@ -45,6 +49,18 @@ app-pipeline-runs-table {
      column — and the page — taller. */
   flex: 1 1 auto;
   min-height: 0;
+}
+
+@media (min-width: 1051px) {
+  .dashboard-grid {
+    /* ~520–580px at an ~850px-tall viewport; grows on taller screens. */
+    min-height: clamp(480px, calc(100vh - 17rem), 720px);
+  }
+
+  app-drone-map,
+  .side-panel {
+    height: 100%;
+  }
 }
 
 @media (max-width: 1050px) {
