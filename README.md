@@ -165,7 +165,7 @@ npm test -- --watch=false
 npm run build
 ```
 
-**69 tests passing.** Production build succeeds (~405 kB initial bundle).
+**69 tests passing.**
 
 ## Assumptions
 
