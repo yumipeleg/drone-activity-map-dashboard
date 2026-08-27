@@ -131,7 +131,6 @@ Invalid records are skipped and counted; duplicates are counted separately. Exec
 - The UI blocks starting a second pipeline while one is in progress.
 - `started_at` is set when the run is accepted (including queue wait); the worker sets `finished_at` on completion or failure.
 - Per-record commits mean a failed run may leave already-persisted telemetry visible on the map.
-- Redis persistence, advanced Celery retry infrastructure, and a Flower monitoring UI are intentionally out of scope.
 
 ## API Highlights
 
