@@ -141,6 +141,7 @@ Invalid records are skipped and counted; duplicates are counted separately. Exec
 | GET | `/api/pipeline/runs/{id}` | Single run (used by frontend polling) |
 | GET | `/api/drones` | Filtered drone telemetry (supports `latest_only`, pagination) |
 | GET | `/api/drones/{drone_id}/history` | Path history for one drone |
+| GET | `/api/drones/{telemetry_id}` | Get a telemetry record by its database ID. |
 | GET | `/api/stats` | Fleet-wide summary statistics |
 | GET | `/health` | Health check |
 
