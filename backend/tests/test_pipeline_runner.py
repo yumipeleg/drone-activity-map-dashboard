@@ -246,3 +246,37 @@ def test_run_pipeline_remains_backward_compatible_and_creates_exactly_one_run(
         run = db.get(PipelineRun, result.pipeline_run_id)
         assert run is not None
         assert run.status == PipelineRunStatus.COMPLETED
+
+
+def test_csv_input_counts_invalid_records_like_json(tmp_path: Path) -> None:
+    csv_path = tmp_path / "input.csv"
+    csv_path.write_text(
+        "drone_id,drone_type,operator_id,latitude,longitude,altitude_m,speed_kmh,"
+        "battery_percent,timestamp,status\n"
+        "DRONE-001,Quadcopter,OP-123,32.0853,34.7818,120,45,76,2026-06-28T10:30:00Z,active\n"
+        ",Quadcopter,OP-123,200,34.7818,-50,,150,invalid-date,flying\n",
+        encoding="utf-8",
+    )
+
+    result = run_pipeline(csv_path)
+
+    assert result.status == PipelineRunStatus.COMPLETED
+    assert result.total_records == 2
+    assert result.valid_records == 1
+    assert result.invalid_records == 1
+
+
+def test_execute_pipeline_run_resolves_input_file_from_run_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    input_path = _write_input(tmp_path, [VALID_RECORD])
+    monkeypatch.setattr("app.pipeline.runner.settings.pipeline_input_dir", str(tmp_path))
+
+    with SessionLocal() as db:
+        created = create_pipeline_run(db, input_file=input_path.name)
+        run_id = created.id
+
+    result = execute_pipeline_run(run_id)
+
+    assert result.status == PipelineRunStatus.COMPLETED
+    assert result.valid_records == 1

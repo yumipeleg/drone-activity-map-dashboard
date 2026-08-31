@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from kombu.exceptions import OperationalError
+from pathlib import Path
 
 from app.db.session import SessionLocal
 from app.main import app
@@ -37,6 +38,7 @@ def test_post_returns_202_with_queued_run(mock_delay: MagicMock) -> None:
     assert response.status_code == 202
     body = response.json()
     assert body["status"] == "queued"
+    assert body["input_file"] == "sample_drones.json"
     assert body["finished_at"] is None
     assert body["total_records"] == 0
     assert body["valid_records"] == 0
@@ -110,3 +112,99 @@ def test_get_pipeline_run_not_found() -> None:
     response = client.get("/api/pipeline/runs/999999")
 
     assert response.status_code == 404
+
+
+def test_get_pipeline_inputs_lists_json_and_csv_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "a.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "b.csv").write_text("h\n", encoding="utf-8")
+    (tmp_path / "ignore.txt").write_text("x", encoding="utf-8")
+    monkeypatch.setattr("app.api.routes.pipeline.settings.pipeline_input_dir", str(tmp_path))
+
+    response = client.get("/api/pipeline/inputs")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["files"] == ["a.json", "b.csv"]
+    assert body["default_file"] == "sample_drones.json"
+
+
+def test_post_with_explicit_input_file(
+    tmp_path: Path, mock_delay: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "custom.json").write_text("[]", encoding="utf-8")
+    monkeypatch.setattr("app.api.routes.pipeline.settings.pipeline_input_dir", str(tmp_path))
+
+    response = client.post("/api/pipeline/run", json={"input_file": "custom.json"})
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["input_file"] == "custom.json"
+    mock_delay.assert_called_once_with(body["id"])
+
+
+def test_post_without_input_file_uses_default(
+    mock_delay: MagicMock,
+) -> None:
+    response = client.post("/api/pipeline/run", json={})
+
+    assert response.status_code == 202
+    assert response.json()["input_file"] == "sample_drones.json"
+
+
+def test_post_without_body_uses_default(mock_delay: MagicMock) -> None:
+    response = client.post("/api/pipeline/run")
+
+    assert response.status_code == 202
+    assert response.json()["input_file"] == "sample_drones.json"
+
+
+def test_post_unsafe_filename_returns_400_and_creates_no_run(
+    mock_delay: MagicMock,
+) -> None:
+    response = client.post("/api/pipeline/run", json={"input_file": "../secrets.json"})
+
+    assert response.status_code == 400
+    mock_delay.assert_not_called()
+
+    with SessionLocal() as db:
+        assert db.query(PipelineRun).count() == 0
+
+
+def test_post_backslash_traversal_returns_400_and_creates_no_run(
+    mock_delay: MagicMock,
+) -> None:
+    response = client.post("/api/pipeline/run", json={"input_file": "..\\secrets.json"})
+
+    assert response.status_code == 400
+    mock_delay.assert_not_called()
+
+    with SessionLocal() as db:
+        assert db.query(PipelineRun).count() == 0
+
+
+def test_post_unsupported_extension_returns_400_and_creates_no_run(
+    mock_delay: MagicMock,
+) -> None:
+    response = client.post("/api/pipeline/run", json={"input_file": "notes.txt"})
+
+    assert response.status_code == 400
+    mock_delay.assert_not_called()
+
+    with SessionLocal() as db:
+        assert db.query(PipelineRun).count() == 0
+
+
+def test_post_missing_file_returns_404_and_creates_no_run(
+    tmp_path: Path, mock_delay: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("app.api.routes.pipeline.settings.pipeline_input_dir", str(tmp_path))
+
+    response = client.post("/api/pipeline/run", json={"input_file": "missing.json"})
+
+    assert response.status_code == 404
+    mock_delay.assert_not_called()
+
+    with SessionLocal() as db:
+        assert db.query(PipelineRun).count() == 0

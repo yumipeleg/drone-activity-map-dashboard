@@ -46,9 +46,9 @@
 
 table {
   width: 100%;
-  /* Content-driven floor (~660–680px for 8 nowrap columns + Error wrap); expands
-     to fill the panel when more space is available. */
-  min-width: 680px;
+  /* Content-driven floor for 9 nowrap columns + Error wrap; expands to fill
+     the panel when more space is available. */
+  min-width: 760px;
   border-collapse: collapse;
   font-size: 0.85rem;
 }

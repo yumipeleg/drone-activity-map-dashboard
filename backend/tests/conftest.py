@@ -112,7 +112,19 @@ def _prepare_test_database():
     """
     _ensure_test_database_exists()
     Base.metadata.create_all(bind=engine)
+    _ensure_test_schema_columns()
     yield
+
+
+def _ensure_test_schema_columns() -> None:
+    """Apply additive column changes when models evolve ahead of create_all()."""
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE pipeline_run "
+                "ADD COLUMN IF NOT EXISTS input_file VARCHAR(255)"
+            )
+        )
 
 
 @pytest.fixture(autouse=True)

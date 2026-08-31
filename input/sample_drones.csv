@@ -1,0 +1,3 @@
+drone_id,drone_type,operator_id,latitude,longitude,altitude_m,speed_kmh,battery_percent,timestamp,status
+DRONE-444,Quadcopter,OP-A,31.9000,34.8800,90,35,95,2026-08-18T08:00:00Z,active
+DRONE-444,Quadcopter,OP-A,31.9000,34.8800,90,35,95,2026-08-17T08:00:00Z,active

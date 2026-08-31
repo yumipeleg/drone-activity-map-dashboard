@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/app/config.py -> parents[1] is backend/
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
+_PROJECT_ROOT = _BACKEND_DIR.parent
 
 
 class Settings(BaseSettings):
@@ -21,9 +22,12 @@ class Settings(BaseSettings):
     # localhost:4200 by default.
     cors_allowed_origins: list[str] = ["http://localhost:4200"]
 
-    # Absolute by default so the pipeline finds the sample file regardless
-    # of the working directory the process was started from.
-    pipeline_input_file: str = str(_BACKEND_DIR / "data" / "sample_drones.json")
+    # Runtime pipeline input directory (repo-root input/ locally; overridden
+    # to /app/input in Docker Compose). Files are read directly at run time.
+    pipeline_input_dir: str = str(_PROJECT_ROOT / "input")
+
+    # Logical filename used when POST /api/pipeline/run omits input_file.
+    pipeline_default_input_file: str = "sample_drones.json"
 
     # Celery message broker — Redis only; no result backend is configured.
     celery_broker_url: str = "redis://localhost:6379/0"

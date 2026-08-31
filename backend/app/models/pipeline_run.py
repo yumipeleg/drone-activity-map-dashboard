@@ -10,7 +10,7 @@ a real requirement.
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, Text
+from sqlalchemy import DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -50,3 +50,6 @@ class PipelineRun(Base):
     )
 
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Logical filename selected for this run (not an absolute path).
+    input_file: Mapped[str | None] = mapped_column(String(255), nullable=True)

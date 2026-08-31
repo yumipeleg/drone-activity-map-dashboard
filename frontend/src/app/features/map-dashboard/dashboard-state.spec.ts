@@ -44,6 +44,7 @@ function completedRun(overrides: Partial<PipelineRun> = {}): PipelineRun {
     invalid_records: 1,
     duplicate_records: 0,
     error_message: null,
+    input_file: 'sample_drones.json',
     ...overrides,
   };
 }
@@ -69,8 +70,27 @@ describe('DashboardStateService', () => {
     return httpMock.expectOne((r) => r.url === `${API_BASE_URL}/api/pipeline/runs` && r.method === 'GET');
   }
 
+  function expectPipelineInputs() {
+    return httpMock.expectOne(`${API_BASE_URL}/api/pipeline/inputs`);
+  }
+
+  function flushAvailableInputFiles(files = ['sample_drones.json']) {
+    service.loadAvailableInputFiles();
+    expectPipelineInputs().flush({ files, default_file: 'sample_drones.json' });
+  }
+
+  function prepareRunPipeline() {
+    flushAvailableInputFiles();
+  }
+
   function expectGetRun(runId: number) {
     return httpMock.expectOne(`${API_BASE_URL}/api/pipeline/runs/${runId}`);
+  }
+
+  function expectRunPipelinePost() {
+    const req = httpMock.expectOne(`${API_BASE_URL}/api/pipeline/run`);
+    expect(req.request.body).toEqual({ input_file: 'sample_drones.json' });
+    return req;
   }
 
   beforeEach(() => {
@@ -87,7 +107,7 @@ describe('DashboardStateService', () => {
     return httpMock.expectOne((r) => r.url === `${API_BASE_URL}/api/drones` && r.method === 'GET');
   }
 
-  it('loadInitial() fires GET /api/drones (latest_only=true) and GET /api/pipeline/runs', () => {
+  it('loadInitial() fires GET /api/drones, GET /api/pipeline/runs, and GET /api/pipeline/inputs', () => {
     service.loadInitial();
 
     const dronesReq = expectDronesRequest();
@@ -95,11 +115,19 @@ describe('DashboardStateService', () => {
     dronesReq.flush(page([SAMPLE_DRONE]));
 
     httpMock.expectOne((r) => r.url === `${API_BASE_URL}/api/pipeline/runs`).flush([completedRun()]);
+    expectPipelineInputs().flush({
+      files: ['sample_drones.json'],
+      default_file: 'sample_drones.json',
+    });
 
     expect(service.drones()).toEqual([SAMPLE_DRONE]);
     expect(service.pipelineRuns()).toEqual([completedRun()]);
+    expect(service.availableInputFiles()).toEqual(['sample_drones.json']);
+    expect(service.selectedInputFile()).toBe('sample_drones.json');
+    expect(service.canRunPipeline()).toBe(true);
     expect(service.dronesLoading()).toBe(false);
     expect(service.pipelineRunsLoading()).toBe(false);
+    expect(service.inputFilesLoading()).toBe(false);
     httpMock.expectNone(`${API_BASE_URL}/api/stats`);
   });
 
@@ -243,13 +271,68 @@ describe('DashboardStateService', () => {
     expect(service.selectedDroneHistory()).toEqual([]);
   });
 
+  it('loadAvailableInputFiles() picks default_file when present', () => {
+    flushAvailableInputFiles(['custom.json', 'sample_drones.json']);
+
+    expect(service.availableInputFiles()).toEqual(['custom.json', 'sample_drones.json']);
+    expect(service.selectedInputFile()).toBe('sample_drones.json');
+    expect(service.canRunPipeline()).toBe(true);
+  });
+
+  it('loadAvailableInputFiles() falls back to the first file when default is absent', () => {
+    flushAvailableInputFiles(['alpha.json', 'beta.csv']);
+
+    expect(service.selectedInputFile()).toBe('alpha.json');
+  });
+
+  it('canRunPipeline() is false while input files are loading', () => {
+    service.loadAvailableInputFiles();
+    expect(service.canRunPipeline()).toBe(false);
+    expectPipelineInputs().flush({ files: ['sample_drones.json'], default_file: 'sample_drones.json' });
+    expect(service.canRunPipeline()).toBe(true);
+  });
+
+  it('canRunPipeline() is false after input file loading fails', () => {
+    service.loadAvailableInputFiles();
+    expectPipelineInputs().flush({ detail: 'down' }, { status: 500, statusText: 'Server Error' });
+
+    expect(service.inputFilesError()).toBe('down');
+    expect(service.selectedInputFile()).toBeNull();
+    expect(service.canRunPipeline()).toBe(false);
+  });
+
+  it('canRunPipeline() is false when the input file list is empty', () => {
+    flushAvailableInputFiles([]);
+
+    expect(service.canRunPipeline()).toBe(false);
+  });
+
+  it('runPipeline() forwards the selected filename', () => {
+    vi.useFakeTimers();
+    prepareRunPipeline();
+
+    service.runPipeline();
+
+    expectRunPipelinePost().flush(queuedRun({ id: 42 }));
+    expectPipelineRunsList().flush([queuedRun({ id: 42 })]);
+
+    vi.advanceTimersByTime(0);
+    expectGetRun(42).flush(completedRun({ id: 42 }));
+
+    expectDronesRequest().flush(page([SAMPLE_DRONE]));
+    expectPipelineRunsList().flush([completedRun({ id: 42 })]);
+
+    vi.useRealTimers();
+  });
+
   it('runPipeline(): POST queued starts polling the returned run id', () => {
     vi.useFakeTimers();
+    prepareRunPipeline();
 
     service.runPipeline();
     expect(service.pipelineRunning()).toBe(true);
 
-    httpMock.expectOne(`${API_BASE_URL}/api/pipeline/run`).flush(queuedRun({ id: 42 }));
+    expectRunPipelinePost().flush(queuedRun({ id: 42 }));
     expectPipelineRunsList().flush([queuedRun({ id: 42 })]);
 
     vi.advanceTimersByTime(0);
@@ -267,13 +350,14 @@ describe('DashboardStateService', () => {
 
   it('runPipeline(): queued → completed refreshes drones and pipeline history once at terminal status', () => {
     vi.useFakeTimers();
+    prepareRunPipeline();
 
     service.applyFilters({ droneType: 'Quadcopter' });
     expectDronesRequest().flush(page([]));
 
     service.runPipeline();
 
-    httpMock.expectOne(`${API_BASE_URL}/api/pipeline/run`).flush(queuedRun({ id: 7 }));
+    expectRunPipelinePost().flush(queuedRun({ id: 7 }));
     expectPipelineRunsList().flush([queuedRun({ id: 7 })]);
 
     vi.advanceTimersByTime(0);
@@ -300,10 +384,11 @@ describe('DashboardStateService', () => {
 
   it('runPipeline(): queued → started → completed polls until terminal status', () => {
     vi.useFakeTimers();
+    prepareRunPipeline();
 
     service.runPipeline();
 
-    httpMock.expectOne(`${API_BASE_URL}/api/pipeline/run`).flush(queuedRun({ id: 9 }));
+    expectRunPipelinePost().flush(queuedRun({ id: 9 }));
     expectPipelineRunsList().flush([queuedRun({ id: 9 })]);
 
     vi.advanceTimersByTime(0);
@@ -328,6 +413,7 @@ describe('DashboardStateService', () => {
 
   it('runPipeline(): failed terminal result refreshes drones and pipeline history and sets pipelineError', () => {
     vi.useFakeTimers();
+    prepareRunPipeline();
 
     const failedRun = completedRun({
       id: 3,
@@ -338,7 +424,7 @@ describe('DashboardStateService', () => {
 
     service.runPipeline();
 
-    httpMock.expectOne(`${API_BASE_URL}/api/pipeline/run`).flush(queuedRun({ id: 3 }));
+    expectRunPipelinePost().flush(queuedRun({ id: 3 }));
     expectPipelineRunsList().flush([queuedRun({ id: 3 })]);
 
     vi.advanceTimersByTime(0);
@@ -357,6 +443,8 @@ describe('DashboardStateService', () => {
   });
 
   it('runPipeline(): HTTP 503 on POST does not start polling and exposes backend error_message', () => {
+    prepareRunPipeline();
+
     const enqueueFailed = completedRun({
       id: 11,
       status: 'failed',
@@ -377,10 +465,11 @@ describe('DashboardStateService', () => {
 
   it('runPipeline(): does not start a second POST while pipelineRunning is true', () => {
     vi.useFakeTimers();
+    prepareRunPipeline();
 
     service.runPipeline();
 
-    const postReq = httpMock.expectOne(`${API_BASE_URL}/api/pipeline/run`);
+    const postReq = expectRunPipelinePost();
     service.runPipeline();
 
     httpMock.expectNone(`${API_BASE_URL}/api/pipeline/run`);
@@ -396,6 +485,8 @@ describe('DashboardStateService', () => {
   });
 
   it('runPipeline(): on an HTTP-level POST failure, sets pipelineError and does not refresh anything', () => {
+    prepareRunPipeline();
+
     service.runPipeline();
 
     httpMock

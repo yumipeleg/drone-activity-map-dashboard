@@ -1,6 +1,7 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
+import { PipelineInputs } from '../models/pipeline-inputs';
 import { PipelineRun } from '../models/pipeline-run';
 import { API_BASE_URL } from './api-config';
 
@@ -14,8 +15,13 @@ export class PipelineApiService {
   private readonly baseUrl = `${API_BASE_URL}/api/pipeline`;
 
   /** POST /api/pipeline/run — returns HTTP 202 with a queued run; poll getRun(id) for the terminal state. */
-  runPipeline(): Observable<PipelineRun> {
-    return this.http.post<PipelineRun>(`${this.baseUrl}/run`, {});
+  runPipeline(inputFile?: string): Observable<PipelineRun> {
+    const body = inputFile ? { input_file: inputFile } : {};
+    return this.http.post<PipelineRun>(`${this.baseUrl}/run`, body);
+  }
+
+  listInputs(): Observable<PipelineInputs> {
+    return this.http.get<PipelineInputs>(`${this.baseUrl}/inputs`);
   }
 
   /** Defaults to 100 (the dashboard's run-history table) — still well within the backend's `limit` cap of 100 (`ge=1, le=100`). */

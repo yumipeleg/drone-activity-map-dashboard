@@ -30,9 +30,16 @@ VALID_RECORD = {
 }
 
 
-def _write_input(tmp_path: Path, records: list[dict]) -> Path:
-    input_path = tmp_path / "input.json"
-    input_path.write_text(json.dumps(records), encoding="utf-8")
+def _write_input(tmp_path: Path, records: list[dict], name: str = "input.json") -> Path:
+    input_path = tmp_path / name
+    if name.endswith(".csv"):
+        header = ",".join(records[0].keys()) if records else "drone_id"
+        lines = [header]
+        for record in records:
+            lines.append(",".join(str(record[key]) for key in record))
+        input_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    else:
+        input_path.write_text(json.dumps(records), encoding="utf-8")
     return input_path
 
 
@@ -48,7 +55,47 @@ def test_run_pipeline_task_executes_existing_run_without_creating_another(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     input_path = _write_input(tmp_path, [VALID_RECORD])
-    monkeypatch.setattr(settings, "pipeline_input_file", str(input_path))
+    monkeypatch.setattr(settings, "pipeline_input_dir", str(tmp_path))
+
+    with SessionLocal() as db:
+        created = create_pipeline_run(db, input_file=input_path.name)
+        run_id = created.id
+
+    run_pipeline_task.run(run_id)
+
+    with SessionLocal() as db:
+        assert db.query(PipelineRun).count() == 1
+        run = db.get(PipelineRun, run_id)
+        assert run is not None
+        assert run.status == PipelineRunStatus.COMPLETED
+
+
+def test_run_pipeline_task_executes_csv_input_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_path = _write_input(tmp_path, [VALID_RECORD], name="input.csv")
+    monkeypatch.setattr(settings, "pipeline_input_dir", str(tmp_path))
+
+    with SessionLocal() as db:
+        created = create_pipeline_run(db, input_file=input_path.name)
+        run_id = created.id
+
+    run_pipeline_task.run(run_id)
+
+    with SessionLocal() as db:
+        run = db.get(PipelineRun, run_id)
+        assert run is not None
+        assert run.status == PipelineRunStatus.COMPLETED
+
+
+def test_run_pipeline_task_falls_back_to_default_when_run_has_no_input_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_path = _write_input(tmp_path, [VALID_RECORD], name="sample_drones.json")
+    monkeypatch.setattr(settings, "pipeline_input_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "pipeline_default_input_file", default_path.name)
 
     with SessionLocal() as db:
         created = create_pipeline_run(db)
@@ -57,7 +104,6 @@ def test_run_pipeline_task_executes_existing_run_without_creating_another(
     run_pipeline_task.run(run_id)
 
     with SessionLocal() as db:
-        assert db.query(PipelineRun).count() == 1
         run = db.get(PipelineRun, run_id)
         assert run is not None
         assert run.status == PipelineRunStatus.COMPLETED

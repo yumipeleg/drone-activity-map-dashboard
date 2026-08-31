@@ -12,7 +12,7 @@ re-reading the raw exercise brief each time.
 
 Build a small full-stack application that:
 
-1. Ingests simulated drone telemetry records from a JSON file.
+1. Ingests simulated drone telemetry records from a JSON or CSV file.
 2. Validates, normalizes, and persists them via a Python backend pipeline.
 3. Exposes the processed data through a REST API.
 4. Displays drone positions on a map in an Angular frontend, with filtering
@@ -121,7 +121,9 @@ A history of pipeline executions is stored, with at least:
 
 ### Pipeline
 
-- JSON file as the initial input source.
+- JSON or CSV files from a runtime input directory (`input/` at repo root,
+  bind-mounted into backend/worker containers). Files can be added or replaced
+  without rebuilding or restarting the stack.
 - Pipeline logic is independent from the API layer (see
   [`ARCHITECTURE.md`](./ARCHITECTURE.md)).
 - Conceptual stages: `load -> validate -> normalize -> persist -> update
@@ -160,6 +162,9 @@ Implemented (Day 5):
 
 - Celery background worker + Redis broker for async pipeline execution
   (`POST /api/pipeline/run` → HTTP 202 → worker → frontend polling).
+- Runtime pipeline input file selection (`GET /api/pipeline/inputs`, optional
+  `input_file` on `POST /api/pipeline/run`, `PipelineRun.input_file` stored as
+  the logical filename).
 - Full Docker Compose stack (`db`, `redis`, `backend`, `worker`, `frontend`).
   Backend runs Alembic migrations on startup before serving.
 - Root [`README.md`](./README.md) with Docker Compose quick start and test instructions.

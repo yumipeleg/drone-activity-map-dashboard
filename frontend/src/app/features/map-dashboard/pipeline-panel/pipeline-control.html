@@ -1,16 +1,42 @@
-<section class="pipeline-control" aria-labelledby="pipeline-control-heading">
-  <h2 id="pipeline-control-heading">Pipeline</h2>
-
-  <button
-    type="button"
-    [disabled]="state.pipelineRunning()"
-    [attr.aria-busy]="state.pipelineRunning()"
-    (click)="runPipeline()"
-  >
-    {{ state.pipelineRunning() ? 'Running…' : 'Run Pipeline' }}
-  </button>
-
-  @if (state.pipelineError()) {
-    <p class="status-message error" role="alert">{{ state.pipelineError() }}</p>
-  }
-</section>
+<section class="pipeline-control" aria-labelledby="pipeline-control-heading">
+  <h2 id="pipeline-control-heading">Pipeline</h2>
+
+  <div class="field">
+    <label for="pipeline-input-file">Input file</label>
+    <select
+      id="pipeline-input-file"
+      [disabled]="state.pipelineRunning() || state.inputFilesLoading() || state.availableInputFiles().length === 0"
+      [value]="state.selectedInputFile() ?? ''"
+      (change)="onInputFileChange($event)"
+    >
+      @if (state.inputFilesLoading()) {
+        <option value="">Loading input files…</option>
+      } @else if (state.availableInputFiles().length === 0) {
+        <option value="">No input files available</option>
+      } @else {
+        @for (file of state.availableInputFiles(); track file) {
+          <option [value]="file">{{ file }}</option>
+        }
+      }
+    </select>
+  </div>
+
+  <button
+    type="button"
+    [disabled]="!state.canRunPipeline()"
+    [attr.aria-busy]="state.pipelineRunning()"
+    (click)="runPipeline()"
+  >
+    {{ state.pipelineRunning() ? 'Running…' : 'Run Pipeline' }}
+  </button>
+
+  @if (state.inputFilesError()) {
+    <p class="status-message error" role="alert">
+      Could not load input files — Run Pipeline is unavailable. {{ state.inputFilesError() }}
+    </p>
+  }
+
+  @if (state.pipelineError()) {
+    <p class="status-message error" role="alert">{{ state.pipelineError() }}</p>
+  }
+</section>

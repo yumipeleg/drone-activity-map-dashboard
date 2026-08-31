@@ -1,4 +1,4 @@
-"""Pydantic response schema for a `PipelineRun`.
+"""Pydantic schemas for pipeline run API requests and responses.
 
 Used for all three "PipelineRun-shaped" API responses: `GET
 /api/pipeline/runs`, `GET /api/pipeline/runs/{id}`, and `POST
@@ -25,3 +25,13 @@ class PipelineRunRead(BaseModel):
     invalid_records: int
     duplicate_records: int
     error_message: str | None
+    input_file: str | None
+
+
+class PipelineRunCreate(BaseModel):
+    input_file: str | None = None
+
+
+class PipelineInputsRead(BaseModel):
+    files: list[str]
+    default_file: str

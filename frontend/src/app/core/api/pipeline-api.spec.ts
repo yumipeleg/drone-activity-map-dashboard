@@ -19,12 +19,30 @@ describe('PipelineApiService', () => {
 
   afterEach(() => httpMock.verify());
 
-  it('runPipeline() POSTs to /api/pipeline/run', () => {
+  it('runPipeline() POSTs to /api/pipeline/run with no body when called without an argument', () => {
     service.runPipeline().subscribe();
 
     const req = httpMock.expectOne(`${API_BASE_URL}/api/pipeline/run`);
     expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({});
     req.flush({ id: 1, status: 'queued' });
+  });
+
+  it('runPipeline(inputFile) POSTs { input_file } to /api/pipeline/run', () => {
+    service.runPipeline('sample_drones.json').subscribe();
+
+    const req = httpMock.expectOne(`${API_BASE_URL}/api/pipeline/run`);
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({ input_file: 'sample_drones.json' });
+    req.flush({ id: 1, status: 'queued' });
+  });
+
+  it('listInputs() requests GET /api/pipeline/inputs', () => {
+    service.listInputs().subscribe();
+
+    const req = httpMock.expectOne(`${API_BASE_URL}/api/pipeline/inputs`);
+    expect(req.request.method).toBe('GET');
+    req.flush({ files: ['sample_drones.json'], default_file: 'sample_drones.json' });
   });
 
   it('listRuns() requests GET /api/pipeline/runs with a limit param', () => {

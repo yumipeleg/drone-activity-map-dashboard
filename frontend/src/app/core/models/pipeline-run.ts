@@ -17,4 +17,5 @@ export interface PipelineRun {
   invalid_records: number;
   duplicate_records: number;
   error_message: string | null;
+  input_file: string | null;
 }

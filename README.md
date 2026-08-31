@@ -106,10 +106,19 @@ See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for deeper design notes.
 ## Pipeline Flow
 
 ```
-JSON → validation → normalization → duplicate detection → persist valid telemetry → update PipelineRun
+JSON or CSV → validation → normalization → duplicate detection → persist valid telemetry → update PipelineRun
 ```
 
-Invalid records are skipped and counted; duplicates are counted separately. Execution is asynchronous: `POST /api/pipeline/run` returns immediately with HTTP 202 while a worker processes the file. Valid rows are committed individually, so a later processing failure can leave already-persisted telemetry in the database.
+Invalid records are skipped and counted; duplicates are counted separately. Execution is asynchronous: `POST /api/pipeline/run` returns immediately with HTTP 202 while a worker processes the selected file. Valid rows are committed individually, so a later processing failure can leave already-persisted telemetry in the database.
+
+## Runtime Input Files
+
+Pipeline input files live in the repo-root [`input/`](./input/) directory. In Docker Compose, this directory is bind-mounted read-only into the backend and worker at `/app/input` (`PIPELINE_INPUT_DIR`).
+
+- Supported extensions: `.json` (top-level array of record objects) and `.csv` (header row with column names matching `DroneTelemetryInput` field names exactly, e.g. `drone_id`, `drone_type`, `operator_id`, `latitude`, `longitude`, `altitude_m`, `speed_kmh`, `battery_percent`, `timestamp`, `status`).
+- Drop a new `.json` or `.csv` file into `input/` while the stack is running — it appears in the UI dropdown immediately (via `GET /api/pipeline/inputs`) without rebuild or restart.
+- No snapshot: if a file changes after the API validates it but before the worker reads it, the newer content is processed.
+- Default file when `input_file` is omitted from `POST /api/pipeline/run`: `sample_drones.json`.
 
 ## Key Features
 
@@ -136,7 +145,8 @@ Invalid records are skipped and counted; duplicates are counted separately. Exec
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| POST | `/api/pipeline/run` | Enqueue ingestion — returns **HTTP 202** with a `queued` run |
+| POST | `/api/pipeline/run` | Enqueue ingestion — optional `{ "input_file": "..." }` body; returns **HTTP 202** with a `queued` run |
+| GET | `/api/pipeline/inputs` | List available runtime input files (`.json`/`.csv`) |
 | GET | `/api/pipeline/runs` | Recent pipeline run history |
 | GET | `/api/pipeline/runs/{id}` | Single run (used by frontend polling) |
 | GET | `/api/drones` | Filtered drone telemetry (supports `latest_only`, pagination) |
@@ -170,6 +180,6 @@ npm run build
 
 ## Assumptions
 
-- Default pipeline input is `backend/data/sample_drones.json` (bundled in the backend Docker image at `/app/data/sample_drones.json`).
+- Default pipeline input is `input/sample_drones.json` (logical name `sample_drones.json`, bind-mounted at `/app/input` in containers).
 - Timestamps without a timezone offset are treated as UTC during validation.
 - Docker Compose is the recommended path for reviewers; local Python/npm development is supported but not required for evaluation.

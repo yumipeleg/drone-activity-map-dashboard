@@ -36,6 +36,7 @@ from app.db.session import SessionLocal
 from app.models.drone_telemetry import DroneTelemetry
 from app.models.enums import PipelineRunStatus
 from app.models.pipeline_run import PipelineRun
+from app.pipeline.input_files import resolve_input_file
 from app.pipeline.loader import load_raw_records
 from app.schemas.drone_telemetry import DroneTelemetryInput
 
@@ -59,7 +60,7 @@ class PipelineResult:
     error_message: str | None
 
 
-def create_pipeline_run(db: Session) -> PipelineRun:
+def create_pipeline_run(db: Session, input_file: str | None = None) -> PipelineRun:
     """Creates and commits a new `PipelineRun` row with status `QUEUED`.
 
     Uses the session passed in by the caller — this function does not open
@@ -68,7 +69,11 @@ def create_pipeline_run(db: Session) -> PipelineRun:
     the FastAPI route calls this, reads `run.id`, and enqueues
     `run_pipeline_task.delay(run.id)` without executing the pipeline inline.
     """
-    run = PipelineRun(status=PipelineRunStatus.QUEUED, started_at=_utc_now())
+    run = PipelineRun(
+        status=PipelineRunStatus.QUEUED,
+        started_at=_utc_now(),
+        input_file=input_file,
+    )
     db.add(run)
     db.commit()
     return run
@@ -96,8 +101,6 @@ def execute_pipeline_run(pipeline_run_id: int, input_path: str | Path | None = N
     (`COMPLETED` / `FAILED`) — those are programming/infrastructure errors,
     not normal pipeline-processing failures.
     """
-    path = Path(input_path) if input_path is not None else Path(settings.pipeline_input_file)
-
     db = SessionLocal()
     run = db.get(PipelineRun, pipeline_run_id)
     if run is None:
@@ -119,6 +122,12 @@ def execute_pipeline_run(pipeline_run_id: int, input_path: str | Path | None = N
     error_message: str | None = None
 
     try:
+        if input_path is not None:
+            path = Path(input_path)
+        else:
+            filename = run.input_file or settings.pipeline_default_input_file
+            path = resolve_input_file(settings.pipeline_input_dir, filename)
+
         raw_records = load_raw_records(path)
         total = len(raw_records)
 

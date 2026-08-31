@@ -83,7 +83,9 @@ backend/
                        # -> detect duplicates -> persist -> update run status.
                        # This is the function both FastAPI and (later) Celery
                        # will call, unchanged.
-      loader.py        # Reads raw records from the JSON input source; raises
+      input_files.py   # Safe listing/resolution of runtime input filenames
+                       # (path traversal checks, containment, no symlinks).
+      loader.py        # Reads raw records from JSON or CSV input files; raises
                         # InputLoadError only for a file-level problem (a bad
                         # individual record is never this module's concern).
 
@@ -116,9 +118,11 @@ backend/
   tests/             # Pytest tests, mirroring the app/ structure. Includes
                      # conftest.py, which selects/prepares the dedicated
                      # test database for the whole suite (Phase 2B).
-  data/              # Sample JSON input file for the pipeline
-                     # (sample_drones.json).
 ```
+
+Runtime pipeline input files live in the repo-root `input/` directory (bind-mounted
+read-only into backend and worker containers at `/app/input`). See the Docker
+Compose section below.
 
 Note: a `repositories/` layer was sketched here originally but has not been added. `app/services/` (added in Phase 2B) covers the actual need instead — thin functions that build one SQLAlchemy query per read operation for the API routes. The pipeline runner still talks directly to `SessionLocal`, `DroneTelemetry`, and `PipelineRun` via plain SQLAlchemy, since it is a self-contained writer with its own transaction/duplicate-handling concerns that don't overlap with the read-only service functions. A repository layer would only be worth introducing if write-side query logic ever needed to be shared across more than one call-site, which is not the case here.
 
@@ -138,10 +142,11 @@ Note: a `repositories/` layer was sketched here originally but has not been adde
 
 ### Pipeline Stages (finalized in Phase 2A — `backend/app/pipeline/runner.py`)
 
-1. **Load** — `loader.load_raw_records()` reads the JSON file into plain
-   Python dicts. A file-level problem (missing file, invalid JSON, wrong
-   top-level shape) raises `InputLoadError`, which fails the whole run; an
-   individual record's content is never inspected at this stage.
+1. **Load** — `loader.load_raw_records()` reads the resolved input file
+   (JSON or CSV, selected by extension) into plain Python dicts. A file-level
+   problem (missing file, invalid JSON/CSV, wrong top-level JSON shape) raises
+   `InputLoadError`, which fails the whole run; an individual record's content
+   is never inspected at this stage.
 2. **Normalize + validate** — each raw record is passed to
    `DroneTelemetryInput.model_validate()` (see `app/schemas/drone_telemetry.py`).
    Conservative normalization (whitespace trimming, status-casing, UTC
@@ -527,8 +532,10 @@ at the API and task boundaries invoke it.
 
 Browser: `http://localhost:4200` · API: `http://localhost:8000` (direct CORS,
 no reverse proxy). The worker starts only after the backend healthcheck passes
-(migrations complete). Sample pipeline input: `backend/data/sample_drones.json`
-baked into the backend image at `/app/data/sample_drones.json`.
+(migrations complete). Pipeline input files are read at runtime from the
+bind-mounted `input/` directory (`PIPELINE_INPUT_DIR=/app/input` in Compose).
+The default file is `sample_drones.json`; new `.json` or `.csv` files dropped
+into `input/` are selectable without rebuilding or restarting containers.
 
 ## What Is Deliberately Not Decided Yet
 
